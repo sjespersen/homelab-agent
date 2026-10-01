@@ -66,9 +66,11 @@ agent) gets a lot. Read this before you put anything valuable on the box.
 ### What the defaults protect
 
 - SSH accepts keys only; passwords and root login are off.
-- ufw blocks DNS, the web UIs and the Hermes ports (8642, 9119) from everywhere except
-  `TRUSTED_NETS` and Tailscale. Pi-hole, n8n, Uptime Kuma and Beszel listen on `127.0.0.1` only;
-  outside the box they are reachable only through Caddy.
+- ufw blocks DNS and the web UIs from everywhere except `TRUSTED_NETS` and Tailscale.
+  Pi-hole, n8n, Uptime Kuma and Beszel listen on `127.0.0.1` only; outside the box they are
+  reachable only through Caddy.
+- Hermes runs on its own Docker bridge network and publishes only ports 8642 and 9119. It
+  can't reach the other services' ports or Caddy (ufw drops traffic from Docker networks).
 - Hermes pushes to GitHub with per-repo deploy keys, not your account.
 - The Mac's backup key can only read the backup folder (`rrsync -ro`).
 - Backups are encrypted with restic.
@@ -88,12 +90,17 @@ pre-push hook checks that the code builds, not what it does.
 *Reduce it:* let Hermes push to a branch and merge pull requests yourself. Use branch
 protection on `main`.
 
-**3. No isolation between containers.** Every stack uses host networking, so every container
-can reach every other service's `127.0.0.1` port (Pi-hole admin, n8n, Uptime Kuma, Beszel and
-its agent) without going through Caddy. A compromised Hermes or n8n can attack the rest
-directly; each service's own login is the only barrier.
-*Reduce it:* use strong, unique passwords for every web UI. For real isolation, move the stacks
-to Docker bridge networks (more setup; note that `ports:` mappings bypass ufw).
+**3. Little isolation between containers.** Every stack except Hermes uses host networking,
+so n8n, Uptime Kuma, Beszel and Pi-hole can reach each other's `127.0.0.1` ports without going
+through Caddy. A compromised n8n can attack the rest directly; each service's own login is the
+only barrier. Hermes is on a bridge network, but its published ports have a catch: Docker's
+port rules skip ufw for IPv4, so anything that reaches the server's IPv4 address can reach
+8642 and 9119, whatever `TRUSTED_NETS` says. With the defaults that is your LAN and tailnet,
+which are trusted anyway; it matters once you narrow `TRUSTED_NETS` (see 6). IPv6 still goes
+through ufw.
+*Reduce it:* use strong, unique passwords for every web UI. Move more stacks to bridge
+networks (n8n next: it can run code). To make ufw apply to published ports, add rules to the
+`DOCKER-USER` chain.
 
 **4. Several paths to root.** Anything that controls Docker controls the host:
 - The Beszel agent mounts the Docker socket. `:ro` does not limit the Docker API, so a
@@ -147,8 +154,8 @@ every boot); keep the box somewhere it won't walk off.
 
 ### Smaller items
 
-- Hermes' API on port 8642 gives full agent access to anyone with the key on `TRUSTED_NETS` or
-  the tailnet. Treat that key like a password.
+- Hermes' API on port 8642 gives full agent access to anyone with the key who can reach the
+  port (see 3). Treat that key like a password.
 - n8n webhooks are open by design to anyone who can reach n8n. Add authentication in the
   webhook node.
 - Tailscale is installed with `curl | sh`, and `bootstrap.sh` runs as root: read scripts before

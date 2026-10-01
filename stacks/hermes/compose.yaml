@@ -4,7 +4,11 @@ services:
   gateway:
     image: nousresearch/hermes-agent:latest
     container_name: hermes
-    network_mode: host
+    # Own bridge network, not the host's: Hermes can't reach the other services' 127.0.0.1
+    # ports. Only the two ports below are published (on all addresses; see README for ufw).
+    ports:
+      - "8642:8642"
+      - "9119:9119"
     environment:
       HERMES_UID: "${PUID}"
       HERMES_GID: "${PGID}"

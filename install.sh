@@ -25,6 +25,10 @@ for s in "${stacks[@]}"; do
   rsync -a "$repo/stacks/$s/" "/opt/stacks/$s/"
   # Create data dirs ourselves; Docker would create them owned by root.
   mkdir -p "/opt/stacks/$s/data"
+  # So a plain `docker compose ...` in the stack's directory sees the same settings.
+  for v in NAME DOMAIN LAN_IP TZ PUID PGID PIHOLE_HOSTS; do
+    printf '%s="%s"\n' "$v" "${!v}"
+  done >"/opt/stacks/$s/.env"
 done
 rmdir /opt/stacks/pihole/data 2>/dev/null || true  # Pi-hole uses etc-pihole/
 
