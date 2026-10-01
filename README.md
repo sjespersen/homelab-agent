@@ -7,6 +7,8 @@ The agent's model runs in the cloud (your OpenAI/Anthropic/OpenRouter account, o
 if you have the hardware). The box hosts the agent, its memory, its tools and everything around
 it, 24/7.
 
+Every service except Caddy is optional (see [Modules](#modules)):
+
 | Service | Address | What it does |
 |---|---|---|
 | [Hermes Agent](https://github.com/NousResearch/hermes-agent) | `hermes.home.arpa`, `<server>:9119` | The agent. Chat with it on Telegram/WhatsApp, let it code and push to GitHub |
@@ -18,39 +20,52 @@ it, 24/7.
 | [Tailscale](https://tailscale.com) | — | Reach everything from anywhere, no open ports |
 | [restic](https://restic.net) | — | Nightly encrypted backups, pulled to your Mac |
 
-Everything is code: a fresh Ubuntu Server becomes this setup with two scripts, and a dead box
+Everything is code: a fresh Ubuntu Server becomes this setup with one command, and a dead box
 is rebuilt from the repo plus the latest backup.
 
 ## What you need
 
 - Any x86-64 PC with 8 GB RAM and an SSD. Tested on Ubuntu Server 26.04.
-- A computer to deploy from. The deploy scripts work from macOS or Linux; the backup pull in
-  `mac/` is macOS-only.
+- A computer to set it up from (macOS or Linux), or a keyboard and screen on the server itself.
+  The backup pull in `mac/` is macOS-only.
 - A free [Tailscale](https://tailscale.com) account.
 - An LLM provider account for Hermes.
 
 ## Set up
 
-1. Install Ubuntu Server with OpenSSH. Reserve the server's IP in your router.
-2. From your computer, copy your SSH key to it: `ssh-copy-id <user>@<server-ip>`
-3. `cp config.example.env config.env` and fill it in (about 2 minutes).
-4. `./deploy.sh`. This copies the repo to `~/homelab-agent` on the server. The stacks fail
-   until Docker exists; that's expected.
-5. On the server, in a real terminal: `sudo bash ~/homelab-agent/bootstrap.sh`
-   (installs Docker, restic, Tailscale and the firewall; switches SSH to keys only).
-   Open the Tailscale login link it prints.
-6. Run `./deploy.sh` again; it picks up the Tailscale IP by itself.
-7. Set up Hermes (model, login, chat apps):
-   `ssh -t <server> 'cd /opt/stacks/hermes && docker compose run --rm -it gateway setup'`,
-   then `./deploy.sh` once more to start it.
-8. In the [Tailscale admin console](https://login.tailscale.com/admin/dns), add the server's
-   Tailscale IP as a nameserver. All your Tailscale devices now resolve `*.home.arpa` and get
-   ad blocking.
-9. Open `http://<name>.local` and create the owner accounts for n8n, Uptime Kuma and Beszel
-   (in Beszel, add the system with host `127.0.0.1`, port `45876`).
-10. On a Mac: `mac/setup-mac.sh` starts the daily backup pull.
+1. Install Ubuntu Server on the box, with OpenSSH (the installer offers it).
+2. On your computer:
+   ```sh
+   git clone https://github.com/sjespersen/homelab-agent && cd homelab-agent
+   ./setup.sh
+   ```
+   It asks for the server's address, a name and which services you want; everything else it
+   reads from the server. Then it copies your SSH key, installs Docker, the firewall, Tailscale
+   and the services, and starts Hermes' own setup (model, login, chat apps). You type the
+   server password once, the sudo password once, and open the Tailscale login link it prints.
+3. Do the few things it lists at the end: reserve the server's IP in your router, create the
+   owner accounts in the web UIs, add the server as DNS server in the
+   [Tailscale admin console](https://login.tailscale.com/admin/dns) (with Pi-hole), and save
+   the backup password in your password manager.
 
-Total time: about an hour, most of it waiting for downloads.
+No second computer? Clone the repo on the server and run `./setup.sh --local`; it can import
+your SSH keys from GitHub.
+
+`setup.sh` is safe to re-run: it skips what's done, resumes after an error, and applies
+changed answers. Total time: about an hour, most of it waiting for downloads.
+
+<details>
+<summary>The same by hand</summary>
+
+1. `cp config.example.env config.env` and fill it in; `ssh-copy-id <user>@<server>`.
+2. `./deploy.sh` (copies the repo to `~/homelab-agent`; the stacks fail until Docker exists).
+3. On the server, in a real terminal: `sudo bash ~/homelab-agent/bootstrap.sh`.
+4. `./deploy.sh` again.
+5. `ssh -t <server> 'cd /opt/stacks/hermes && docker compose run --rm -it gateway setup'`,
+   then `./deploy.sh` once more.
+6. On a Mac: `mac/setup-mac.sh` starts the daily backup pull.
+
+</details>
 
 ## Modules
 
@@ -78,13 +93,15 @@ A module is a folder in `stacks/`:
 | `compose.with-<module>.yaml` | Added only when that other module is on (n8n joins Hermes' network) |
 | `backup-excludes.txt`, `after-up.sh`, `root-setup.sh` | Optional: caches to skip, a step after start, host setup as root |
 
-To add your own service, copy a module like `uptime-kuma`, add it to `MODULES`, and run
-`bootstrap.sh` and `./deploy.sh`.
+To add your own service, copy a module like `uptime-kuma`, give it a free `PORT`, and run
+`./setup.sh`.
 
 ## Change something
 
-Edit a compose file in `stacks/`, then `./deploy.sh`. After changing `MODULES`, run
-`bootstrap.sh` first (it opens and closes the firewall ports).
+Edit a compose file in `stacks/`, then `./deploy.sh`. To add or remove services, run
+`./setup.sh` again (it also updates the firewall, which needs sudo).
+
+See what's running, where, and when the last backup ran: `./deploy.sh --status`.
 
 Update all images about once a month: `./deploy.sh --update`. It takes a backup first, so you
 can roll back with restic if a new version breaks something.
@@ -185,6 +202,8 @@ every boot); keep the box somewhere it won't walk off.
   webhook node.
 - Tailscale is installed with `curl | sh`, and `bootstrap.sh` runs as root: read scripts before
   you run them, including these.
+- `./setup.sh --local` can import your SSH keys from GitHub: whoever controls that GitHub account
+  then has a key to the server. Remove keys you don't use from `~/.ssh/authorized_keys`.
 - The Mac pulls with rsync from the server; rsync clients have had bugs a malicious server
   could exploit. Keep Homebrew's rsync updated.
 - Avahi announces the server's name and services on the LAN.
@@ -206,22 +225,23 @@ every boot); keep the box somewhere it won't walk off.
 Check them:
 
 ```sh
-ssh <server> systemctl --user list-timers           # next run on the server
-cat ~/Backups/<name>/last-pull.txt                  # last pull on the Mac
+./deploy.sh --status                                # next run, latest snapshot, last Mac pull
 RESTIC_PASSWORD_COMMAND='security find-generic-password -s <name>-restic -w' \
   restic -r ~/Backups/<name>/restic snapshots
 ```
 
 ## Rebuild from scratch
 
-1. Follow **Set up** steps 1–6.
+1. Install Ubuntu and run `./setup.sh` with your existing `config.env`; skip Hermes' setup.
 2. Stop the containers, then restore the app data from the Mac copy:
    ```sh
    restic -r ~/Backups/<name>/restic restore latest --target /tmp/restore
    rsync -a /tmp/restore/opt/stacks/ <user>@<server>:/opt/stacks/
    ```
-3. `./deploy.sh`, then `mac/setup-mac.sh` to re-authorise the pull key.
-4. If the Tailscale IP changed: update `config.env` and the Tailscale DNS settings.
+3. `./deploy.sh`. On the Mac, `mac/setup-mac.sh` re-authorises the pull key (`setup.sh`
+   already did if you ran it from the Mac).
+4. If the Tailscale IP changed: update the Tailscale DNS settings (and `TAILSCALE_IP` in
+   `config.env`, if you set it).
 
 ## Let Hermes code and push to GitHub
 

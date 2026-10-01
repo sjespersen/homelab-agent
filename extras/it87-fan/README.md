@@ -9,7 +9,8 @@ Only use it if your board has an IT87xx chip and `pwm1` drives the CPU fan. Chec
 1. `sudo apt install lm-sensors && sudo modprobe it87 && sensors` should list an `it87xx` chip with a fan.
 2. Find a safe minimum: watch `sensors` while you lower it by hand, and stop where the RPM
    stops dropping. `echo 50 | sudo tee /sys/class/hwmon/hwmonN/pwm1_auto_start` (N from `sensors`).
-3. Put that number into `config.env` as `IT87_FAN_MIN_PWM` and rerun `bootstrap.sh`.
+3. Put that number into `config.env` as `IT87_FAN_MIN_PWM` and rerun `./setup.sh` (it also
+   asks for it when the it87 driver is loaded).
 
 Reference: Shuttle DS61 (IT8728F) default 82 = 2080 RPM; 50 = 1450 RPM; below 50 no change.
 

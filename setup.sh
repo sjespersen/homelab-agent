@@ -210,7 +210,8 @@ if [[ -z $local_mode && $(uname) == Darwin ]]; then
   say "Backups"
   label="home.$NAME.backup-pull"
   if launchctl print "gui/$(id -u)/$label" >/dev/null 2>&1; then
-    note "This Mac already pulls the backups."
+    # Already set up here; re-run so a rebuilt server gets the pull key again.
+    mac/setup-mac.sh
   elif ! command -v brew >/dev/null; then
     note "Install Homebrew, then run mac/setup-mac.sh to pull the backups to this Mac."
   elif confirm "Copy the server's backups to this Mac every day?" Y; then
