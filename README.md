@@ -84,25 +84,19 @@ WhatsApp session can read and send as you), API keys and GitHub deploy keys.
 *Reduce it:* give it only the keys it needs; keep the chat apps on an allowlist of your own
 accounts; don't connect it to inboxes or accounts you can't afford to leak.
 
-**2. The agent pushes straight to production.** If you let Hermes push to `main` of a repo that
-deploys automatically, one successful injection ships attacker code to your live site. A
-pre-push hook checks that the code builds, not what it does.
-*Reduce it:* let Hermes push to a branch and merge pull requests yourself. Use branch
-protection on `main`.
-
-**3. Little isolation between containers.** Every stack except Hermes uses host networking,
+**2. Little isolation between containers.** Every stack except Hermes uses host networking,
 so n8n, Uptime Kuma, Beszel and Pi-hole can reach each other's `127.0.0.1` ports without going
 through Caddy. A compromised n8n can attack the rest directly; each service's own login is the
 only barrier. Hermes is on a bridge network, but its published ports have a catch: Docker's
 port rules skip ufw for IPv4, so anything that reaches the server's IPv4 address can reach
 8642 and 9119, whatever `TRUSTED_NETS` says. With the defaults that is your LAN and tailnet,
-which are trusted anyway; it matters once you narrow `TRUSTED_NETS` (see 6). IPv6 still goes
+which are trusted anyway; it matters once you narrow `TRUSTED_NETS` (see 5). IPv6 still goes
 through ufw.
 *Reduce it:* use strong, unique passwords for every web UI. Move more stacks to bridge
 networks (n8n next: it can run code). To make ufw apply to published ports, add rules to the
 `DOCKER-USER` chain.
 
-**4. Several paths to root.** Anything that controls Docker controls the host:
+**3. Several paths to root.** Anything that controls Docker controls the host:
 - The Beszel agent mounts the Docker socket. `:ro` does not limit the Docker API, so a
   compromised Beszel image or agent is root on the host.
 - Your user is in the `docker` group, so your SSH key is effectively a root key, and the sudo
@@ -112,41 +106,41 @@ networks (n8n next: it can run code). To make ufw apply to published ports, add 
 `stacks/beszel/compose.yaml` if you don't need per-container stats; make sure n8n's Execute
 Command node is off (`NODES_EXCLUDE`; newer n8n versions turn it off by default).
 
-**5. Ransomware can reach the backups.** Anyone who controls the server can delete or encrypt
+**4. Ransomware can reach the backups.** Anyone who controls the server can delete or encrypt
 `~/backups/restic` (the password sits next to it in `~/.config/restic/password`). The Mac
 pulls with `rsync --delete`, so the next pull mirrors that damage onto the Mac copy.
 *Reduce it:* keep Time Machine (or any versioned backup) running on the Mac so older copies
 survive; check `restic snapshots` now and then.
 
-**6. Plain HTTP on the LAN.** Logins for Hermes (basic auth), n8n, Uptime Kuma, Beszel and
+**5. Plain HTTP on the LAN.** Logins for Hermes (basic auth), n8n, Uptime Kuma, Beszel and
 Pi-hole travel unencrypted when you use them over the LAN. Anyone on the same network can
 capture them: a guest on your Wi-Fi, a compromised smart TV or IoT device. `TRUSTED_NETS`
 usually means "your whole LAN".
 *Reduce it:* use the services over Tailscale (encrypted) even at home, and narrow
 `TRUSTED_NETS` or drop the LAN entries entirely. Put IoT and guest devices on a guest network.
 
-**7. Everyone on your tailnet gets everything.** ufw allows all traffic on `tailscale0`. Any
+**6. Everyone on your tailnet gets everything.** ufw allows all traffic on `tailscale0`. Any
 device you add, any node you share with someone, and anyone who takes over your Tailscale
 account can reach every port on the box.
 *Reduce it:* turn on 2FA for the account behind Tailscale; use
 [Tailscale ACLs](https://tailscale.com/kb/1018/acls) to limit who reaches the server; remove
 old devices.
 
-**8. SSH is open to everyone, not just the LAN.** `ufw allow 22/tcp` has no source limit. On
+**7. SSH is open to everyone, not just the LAN.** `ufw allow 22/tcp` has no source limit. On
 IPv4 that means your LAN. On IPv6 the server has a public address, so port 22 is reachable from
 the internet unless your router's IPv6 firewall blocks incoming connections (most do by
 default; check yours). Keys-only login stops password guessing, not a future SSH vulnerability.
 *Reduce it:* limit SSH to `TRUSTED_NETS` and `tailscale0` once Tailscale works, or check
 that your router blocks incoming IPv6.
 
-**9. Unpinned, unupdated images.** Most images use `:latest`, so you trust whatever the
+**8. Unpinned, unupdated images.** Most images use `:latest`, so you trust whatever the
 maintainers publish next. `--pull missing` never updates them on its own, so known holes stay
 until you update. Ubuntu installs its own security updates (unattended-upgrades); containers
 don't.
 *Reduce it:* update monthly (`docker compose pull && docker compose up -d` in each stack);
 pin versions where you care; follow the release notes for Hermes and n8n.
 
-**10. Secrets at rest.** Ubuntu's default install has no disk encryption, so whoever takes the
+**9. Secrets at rest.** Ubuntu's default install has no disk encryption, so whoever takes the
 box gets every key and session on it. Secrets also sit in plain files under `/opt/stacks`
 (Hermes `data/.env` and `auth.json`, n8n's encryption key) and in every backup.
 *Reduce it:* choose disk encryption when you install Ubuntu (you then type the passphrase at
@@ -155,7 +149,7 @@ every boot); keep the box somewhere it won't walk off.
 ### Smaller items
 
 - Hermes' API on port 8642 gives full agent access to anyone with the key who can reach the
-  port (see 3). Treat that key like a password.
+  port (see 2). Treat that key like a password.
 - n8n webhooks are open by design to anyone who can reach n8n. Add authentication in the
   webhook node.
 - Tailscale is installed with `curl | sh`, and `bootstrap.sh` runs as root: read scripts before
