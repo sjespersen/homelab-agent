@@ -9,6 +9,10 @@ services:
     networks: [default, hermes]
     ports:
       - "127.0.0.1:5678:5678"   # for Caddy
+    # Fixed DNS: at boot Docker can start this before the network has handed the server a DNS
+    # server, and the container would then resolve nothing until restarted. Quad9, like
+    # Pi-hole's upstream (containers can't reach Pi-hole: ufw blocks them from the host).
+    dns: [9.9.9.9, 149.112.112.112]
     environment:
       N8N_LISTEN_ADDRESS: 0.0.0.0
       N8N_PORT: "5678"

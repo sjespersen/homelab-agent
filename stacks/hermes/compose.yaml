@@ -9,6 +9,10 @@ services:
     ports:
       - "8642:8642"
       - "9119:9119"
+    # Fixed DNS: at boot Docker can start this before the network has handed the server a DNS
+    # server, and the container would then resolve nothing until restarted. Quad9, like
+    # Pi-hole's upstream (containers can't reach Pi-hole: ufw blocks them from the host).
+    dns: [9.9.9.9, 149.112.112.112]
     environment:
       HERMES_UID: "${PUID}"
       HERMES_GID: "${PGID}"

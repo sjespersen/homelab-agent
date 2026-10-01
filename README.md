@@ -68,8 +68,11 @@ agent) gets a lot. Read this before you put anything valuable on the box.
 
 ### What the defaults protect
 
-- SSH accepts keys only; passwords and root login are off.
-- ufw blocks DNS and the web UIs from everywhere except `TRUSTED_NETS` and Tailscale.
+- SSH accepts keys only, and only from `TRUSTED_NETS` and Tailscale; passwords and root login
+  are off.
+- ufw blocks DNS, the web UIs and the Hermes ports from everywhere except `TRUSTED_NETS` and
+  Tailscale. That includes the ports Docker publishes, which normally skip ufw (`bootstrap.sh`
+  adds matching rules to Docker's `DOCKER-USER` chain).
   Pi-hole, n8n, Uptime Kuma and Beszel listen on `127.0.0.1` only; outside the box they are
   reachable only through Caddy.
 - Hermes and n8n, the two containers that run code from outside, sit on Docker bridge networks.
@@ -93,12 +96,9 @@ accounts; don't connect it to inboxes or accounts you can't afford to leak.
 share one (so workflows can call `http://hermes:8642/v1`): a compromised Hermes can reach n8n's
 login and webhooks, and the other way round. Pi-hole, Caddy, Uptime Kuma and Beszel still use
 host networking and can reach each other's `127.0.0.1` ports, including the read-only Docker
-proxy on port 2375 (see 3). Hermes' published ports have a catch: Docker's port rules skip ufw
-for IPv4, so anything that reaches the server's IPv4 address can reach 8642 and 9119, whatever
-`TRUSTED_NETS` says. With the defaults that is your LAN and tailnet, which are trusted anyway;
-it matters once you narrow `TRUSTED_NETS` (see 5). IPv6 still goes through ufw.
+proxy on port 2375 (see 3).
 *Reduce it:* use strong, unique passwords for every web UI, and authentication on n8n
-webhooks. To make ufw apply to published ports, add rules to the `DOCKER-USER` chain.
+webhooks.
 
 **3. Several paths to root.** Anything that controls Docker controls the host:
 - Your user is in the `docker` group, so your SSH key is effectively a root key, and the sudo
@@ -132,14 +132,7 @@ account can reach every port on the box.
 [Tailscale ACLs](https://tailscale.com/kb/1018/acls) to limit who reaches the server; remove
 old devices.
 
-**7. SSH is open to everyone, not just the LAN.** `ufw allow 22/tcp` has no source limit. On
-IPv4 that means your LAN. On IPv6 the server has a public address, so port 22 is reachable from
-the internet unless your router's IPv6 firewall blocks incoming connections (most do by
-default; check yours). Keys-only login stops password guessing, not a future SSH vulnerability.
-*Reduce it:* limit SSH to `TRUSTED_NETS` and `tailscale0` once Tailscale works, or check
-that your router blocks incoming IPv6.
-
-**8. Unpinned, unupdated images.** Most images use `:latest`, so you trust whatever the
+**7. Unpinned, unupdated images.** Most images use `:latest`, so you trust whatever the
 maintainers publish next. `--pull missing` never updates them on its own, so known holes stay
 until you update. Ubuntu installs its own security updates (unattended-upgrades); containers
 don't.
@@ -147,7 +140,7 @@ don't.
 newer images for every stack); pin versions where you care; follow the release notes for
 Hermes and n8n.
 
-**9. Secrets at rest.** Ubuntu's default install has no disk encryption, so whoever takes the
+**8. Secrets at rest.** Ubuntu's default install has no disk encryption, so whoever takes the
 box gets every key and session on it. Secrets also sit in plain files under `/opt/stacks`
 (Hermes `data/.env` and `auth.json`, n8n's encryption key) and in every backup.
 *Reduce it:* choose disk encryption when you install Ubuntu (you then type the passphrase at
@@ -155,8 +148,8 @@ every boot); keep the box somewhere it won't walk off.
 
 ### Smaller items
 
-- Hermes' API on port 8642 gives full agent access to anyone with the key who can reach the
-  port (see 2). Treat that key like a password.
+- Hermes' API on port 8642 gives full agent access to anyone with the key on `TRUSTED_NETS` or
+  the tailnet. Treat that key like a password.
 - n8n webhooks are open by design to anyone who can reach n8n. Add authentication in the
   webhook node.
 - Tailscale is installed with `curl | sh`, and `bootstrap.sh` runs as root: read scripts before
@@ -164,6 +157,10 @@ every boot); keep the box somewhere it won't walk off.
 - The Mac pulls with rsync from the server; rsync clients have had bugs a malicious server
   could exploit. Keep Homebrew's rsync updated.
 - Avahi announces the server's name and services on the LAN.
+- If your ISP changes your IPv6 prefix, update `TRUSTED_NETS` and re-run `bootstrap.sh`. Until
+  then the server is reachable over IPv4 on the LAN and over Tailscale, including SSH.
+- If you add a rule to `/etc/ufw/after.rules` yourself, keep it outside the
+  `homelab-agent DOCKER-USER` block; `bootstrap.sh` rewrites that block.
 
 ## Backups
 

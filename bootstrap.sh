@@ -78,15 +78,38 @@ echo "Tailscale IP (put it in config.env as TAILSCALE_IP): $(tailscale ip -4)"
 log "Firewall"
 ufw default deny incoming >/dev/null
 ufw default allow outgoing >/dev/null
-ufw allow 22/tcp >/dev/null
 for src in "${TRUSTED[@]}"; do
-  for port in 53 80 443 8642 9119; do
+  for port in 22 53 80 443 8642 9119; do
     ufw allow from "$src" to any port "$port" >/dev/null
   done
   ufw allow from "$src" to any port 5353 proto udp >/dev/null
 done
 ufw allow in on tailscale0 >/dev/null
+# SSH only from TRUSTED_NETS and Tailscale (added above); older versions allowed it from anywhere.
+ufw delete allow 22/tcp >/dev/null 2>&1 || true
+
+# Ports that Docker publishes (Hermes' 8642 and 9119) skip ufw's rules for IPv4: Docker forwards
+# them before ufw sees them. Docker sends that traffic through its DOCKER-USER chain first, so
+# give that chain the same limits. IPv6 to published ports goes through docker-proxy, which ufw
+# already covers.
+docker_user="# BEGIN homelab-agent DOCKER-USER
+*filter
+:DOCKER-USER - [0:0]
+-A DOCKER-USER -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN
+-A DOCKER-USER -i docker0 -j RETURN
+-A DOCKER-USER -i br-+ -j RETURN
+-A DOCKER-USER -i tailscale0 -j RETURN"
+for src in "${TRUSTED[@]}"; do
+  [[ $src == *:* ]] || docker_user+=$'\n'"-A DOCKER-USER -s $src -j RETURN"
+done
+docker_user+=$'\n'"-A DOCKER-USER -j DROP
+COMMIT
+# END homelab-agent DOCKER-USER"
+sed -i '/^# BEGIN homelab-agent DOCKER-USER$/,/^# END homelab-agent DOCKER-USER$/d' /etc/ufw/after.rules
+printf '%s\n' "$docker_user" >>/etc/ufw/after.rules
+
 ufw --force enable
+ufw reload >/dev/null
 ufw status | head -3
 
 log "Done. Next, from your computer: ./deploy.sh"
