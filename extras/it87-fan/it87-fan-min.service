@@ -1,0 +1,11 @@
+[Unit]
+Description=Lower the CPU fan's minimum speed (ITE IT87xx)
+After=systemd-modules-load.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/it87-fan-min.sh @MIN_PWM@
+
+[Install]
+WantedBy=multi-user.target

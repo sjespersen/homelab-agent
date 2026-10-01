@@ -1,0 +1,19 @@
+# Reverse proxy: gives each service a name (see Caddyfile). Plain HTTP; traffic stays on
+# the LAN or inside Tailscale's encrypted tunnel.
+services:
+  caddy:
+    image: caddy:2
+    container_name: caddy
+    network_mode: host
+    volumes:
+      # A directory, not the file: deploys replace the file, which a file mount would not see.
+      - ./conf:/etc/caddy:ro
+      - ./site:/srv:ro
+      - ./data:/data
+      - ./config:/config
+    environment:
+      # Used by the Caddyfile ({$NAME}) and the landing page template.
+      NAME: ${NAME}
+      DOMAIN: ${DOMAIN}
+      LAN_IP: ${LAN_IP}
+    restart: unless-stopped

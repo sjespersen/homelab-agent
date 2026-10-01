@@ -1,0 +1,21 @@
+# Hermes Agent gateway (official image). Config, API keys, memories live in ./data.
+# First-time setup: docker compose run --rm -it gateway setup
+services:
+  gateway:
+    image: nousresearch/hermes-agent:latest
+    container_name: hermes
+    network_mode: host
+    environment:
+      HERMES_UID: "${PUID}"
+      HERMES_GID: "${PGID}"
+      # OpenAI-compatible API on the LAN (port 8642). Key: API_SERVER_KEY in ./data/.env
+      API_SERVER_ENABLED: "true"
+      API_SERVER_HOST: "0.0.0.0"
+      # Backend for Hermes Desktop (Settings -> Gateways -> Remote gateway), port 9119.
+      # Login: HERMES_DASHBOARD_BASIC_AUTH_* in ./data/.env
+      HERMES_DASHBOARD: "1"
+    volumes:
+      - ./data:/opt/data
+    shm_size: "1gb"   # Chromium crashes with Docker's default 64 MB /dev/shm
+    command: ["gateway", "run"]
+    restart: unless-stopped

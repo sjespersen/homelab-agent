@@ -1,0 +1,23 @@
+# n8n workflow automation. Served by Caddy at n8n.<DOMAIN>.
+# Hermes' OpenAI-compatible API is reachable from workflows at http://127.0.0.1:8642/v1.
+services:
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:latest
+    container_name: n8n
+    network_mode: host
+    environment:
+      N8N_LISTEN_ADDRESS: 127.0.0.1
+      N8N_PORT: "5678"
+      N8N_HOST: n8n.${DOMAIN}
+      N8N_PROTOCOL: http
+      WEBHOOK_URL: http://n8n.${DOMAIN}/
+      N8N_PROXY_HOPS: "1"
+      # Plain HTTP behind Caddy; without this n8n refuses to log in over http.
+      N8N_SECURE_COOKIE: "false"
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      GENERIC_TIMEZONE: ${TZ}
+      TZ: ${TZ}
+    volumes:
+      # Includes n8n's encryption key (config); without it, saved credentials are unreadable.
+      - ./data:/home/node/.n8n
+    restart: unless-stopped

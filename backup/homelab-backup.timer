@@ -1,0 +1,10 @@
+[Unit]
+Description=Nightly restic snapshot of /opt/stacks
+
+[Timer]
+OnCalendar=*-*-* @TIME@ @TZ@
+Persistent=true
+RandomizedDelaySec=10m
+
+[Install]
+WantedBy=timers.target

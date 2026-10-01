@@ -1,0 +1,6 @@
+[Unit]
+Description=Snapshot /opt/stacks app data with restic
+
+[Service]
+Type=oneshot
+ExecStart=@REPO@/backup/homelab-backup.sh

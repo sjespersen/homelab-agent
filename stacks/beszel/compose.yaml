@@ -1,0 +1,28 @@
+# Beszel: server and container stats with history. Served by Caddy at server.<DOMAIN>.
+# The agent reads host stats and the Docker API; the hub stores history and serves the UI.
+services:
+  beszel:
+    image: henrygd/beszel:latest
+    container_name: beszel
+    network_mode: host
+    # Run as your user so the nightly backup can read ./data.
+    user: "${PUID}:${PGID}"
+    command: ["serve", "--http", "127.0.0.1:8090"]
+    volumes:
+      - ./data:/beszel_data
+    restart: unless-stopped
+
+  beszel-agent:
+    image: henrygd/beszel-agent:latest
+    container_name: beszel-agent
+    network_mode: host
+    environment:
+      LISTEN: 127.0.0.1:45876
+      # Only the hub holding the matching private key may connect. The hub creates the key on
+      # first start; until then the agent exits and is restarted.
+      KEY_FILE: /hub/id_ed25519.pub
+    volumes:
+      - ./data:/hub:ro
+      # Docker API for per-container stats. Note: socket access is root-equivalent.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: unless-stopped

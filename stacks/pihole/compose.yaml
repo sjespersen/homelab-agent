@@ -1,0 +1,22 @@
+# Pi-hole DNS sinkhole. Host networking so Pi-hole sees real client IPs (incl. IPv6).
+services:
+  pihole:
+    image: pihole/pihole:latest
+    container_name: pihole
+    network_mode: host
+    environment:
+      TZ: ${TZ}
+      # Quad9 (IPv4 + IPv6). Settings given here are read-only in the web UI.
+      FTLCONF_dns_upstreams: "9.9.9.9;149.112.112.112;2620:fe::fe;2620:fe::9"
+      # ALL so Tailscale clients (100.x) are answered too; ufw limits who can reach port 53.
+      FTLCONF_dns_listeningMode: "ALL"
+      FTLCONF_ntp_sync_active: "false"
+      # Web UI on localhost only; Caddy serves it at pihole.<DOMAIN> and <LAN_IP>/admin.
+      FTLCONF_webserver_port: "127.0.0.1:8081"
+      # Names for the services behind Caddy; install.sh builds the list from config.env.
+      FTLCONF_dns_hosts: ${PIHOLE_HOSTS}
+    volumes:
+      - ./etc-pihole:/etc/pihole
+    cap_add:
+      - SYS_NICE
+    restart: unless-stopped

@@ -1,0 +1,19 @@
+# Rebuildable or disposable data; everything else in /opt/stacks is backed up.
+/opt/stacks/caddy/data
+/opt/stacks/caddy/config
+/opt/stacks/pihole/etc-pihole/pihole-FTL.db*
+/opt/stacks/pihole/etc-pihole/logs
+/opt/stacks/n8n/data/n8nEventLog*.log
+/opt/stacks/hermes/data/.cache
+/opt/stacks/hermes/data/home/.cache
+/opt/stacks/hermes/data/home/.npm
+/opt/stacks/hermes/data/.npm
+/opt/stacks/hermes/data/scripts/whatsapp-bridge/node_modules
+/opt/stacks/hermes/data/lazy-packages
+/opt/stacks/hermes/data/bin
+/opt/stacks/hermes/data/.cua-driver
+/opt/stacks/hermes/data/cache
+/opt/stacks/hermes/data/image_cache
+/opt/stacks/hermes/data/audio_cache
+/opt/stacks/hermes/data/workspace/*/node_modules
+/opt/stacks/hermes/data/workspace/*/dist

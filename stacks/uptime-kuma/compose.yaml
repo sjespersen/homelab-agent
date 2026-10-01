@@ -1,0 +1,15 @@
+# Uptime Kuma: status page and alerts. Served by Caddy at status.<DOMAIN>.
+services:
+  uptime-kuma:
+    image: louislam/uptime-kuma:2
+    container_name: uptime-kuma
+    network_mode: host
+    # Run as your user so the nightly backup can read ./data.
+    user: "${PUID}:${PGID}"
+    environment:
+      UPTIME_KUMA_HOST: 127.0.0.1
+      UPTIME_KUMA_PORT: "3001"
+      TZ: ${TZ}
+    volumes:
+      - ./data:/app/data
+    restart: unless-stopped

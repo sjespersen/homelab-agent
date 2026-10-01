@@ -1,0 +1,6 @@
+# Your own settings.
+config.env
+# Runtime data and secrets live on the server and in the restic backup, never in git.
+data/
+etc-pihole/
+.env

@@ -1,0 +1,33 @@
+{
+	auto_https off
+}
+
+# Landing page. Reachable without Pi-hole DNS, so the Pi-hole admin is also proxied here.
+http://{$NAME}.local, http://{$NAME}.{$DOMAIN}, http://{$LAN_IP} {
+	reverse_proxy /admin* 127.0.0.1:8081
+	reverse_proxy /api* 127.0.0.1:8081
+	root * /srv
+	templates
+	file_server
+}
+
+http://pihole.{$DOMAIN} {
+	redir / /admin/
+	reverse_proxy 127.0.0.1:8081
+}
+
+http://hermes.{$DOMAIN} {
+	reverse_proxy 127.0.0.1:9119
+}
+
+http://n8n.{$DOMAIN} {
+	reverse_proxy 127.0.0.1:5678
+}
+
+http://server.{$DOMAIN} {
+	reverse_proxy 127.0.0.1:8090
+}
+
+http://status.{$DOMAIN} {
+	reverse_proxy 127.0.0.1:3001
+}
