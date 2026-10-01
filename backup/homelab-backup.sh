@@ -5,10 +5,18 @@ set -euo pipefail
 
 export RESTIC_REPOSITORY="$HOME/backups/restic"
 export RESTIC_PASSWORD_FILE="$HOME/.config/restic/password"
-here="$(cd "$(dirname "$0")" && pwd)"
+repo="$(cd "$(dirname "$0")/.." && pwd)"
+source "$repo/lib.sh"
 
 # Containers with SQLite databases are stopped so the snapshot is consistent (~15s).
-stop=(hermes n8n uptime-kuma beszel)
+# Each module lists its own (BACKUP_STOP) and its caches (backup-excludes.txt).
+stop=()
+excludes=()
+for m in $(all_modules); do
+  stop+=($(module_var "$m" BACKUP_STOP))
+  f=$repo/stacks/$m/backup-excludes.txt
+  [[ ! -f $f ]] || excludes+=(--exclude-file "$f")
+done
 running=()
 for c in "${stop[@]}"; do
   if [[ "$(docker inspect -f '{{.State.Running}}' "$c" 2>/dev/null)" == true ]]; then
@@ -22,7 +30,7 @@ restart() {
 trap restart EXIT
 
 if [[ ${#running[@]} -gt 0 ]]; then docker stop "${running[@]}" >/dev/null; fi
-restic backup --quiet --exclude-file "$here/excludes.txt" /opt/stacks
+restic backup --quiet "${excludes[@]}" /opt/stacks
 restart
 trap - EXIT
 

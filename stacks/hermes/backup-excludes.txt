@@ -1,9 +1,3 @@
-# Rebuildable or disposable data; everything else in /opt/stacks is backed up.
-/opt/stacks/caddy/data
-/opt/stacks/caddy/config
-/opt/stacks/pihole/etc-pihole/pihole-FTL.db*
-/opt/stacks/pihole/etc-pihole/logs
-/opt/stacks/n8n/data/n8nEventLog*.log
 /opt/stacks/hermes/data/.cache
 /opt/stacks/hermes/data/home/.cache
 /opt/stacks/hermes/data/home/.npm

@@ -1,0 +1,1 @@
+/opt/stacks/n8n/data/n8nEventLog*.log

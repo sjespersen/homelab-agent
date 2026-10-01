@@ -1,0 +1,2 @@
+/opt/stacks/pihole/etc-pihole/pihole-FTL.db*
+/opt/stacks/pihole/etc-pihole/logs

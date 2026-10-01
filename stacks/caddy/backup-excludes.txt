@@ -1,0 +1,2 @@
+/opt/stacks/caddy/data
+/opt/stacks/caddy/config

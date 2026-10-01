@@ -1,0 +1,3 @@
+# The Pi-hole admin also works on the landing page's address, which needs no Pi-hole DNS.
+reverse_proxy /admin* 127.0.0.1:8081
+reverse_proxy /api* 127.0.0.1:8081

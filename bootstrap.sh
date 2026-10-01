@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # Brings a fresh Ubuntu Server install to the configured state (the root-level parts).
-# Safe to re-run. On the server, in a real terminal:  sudo bash ~/homelab-agent/bootstrap.sh
+# Safe to re-run. setup.sh runs it for you; by hand, on the server in a real terminal:
+#   sudo bash ~/homelab-agent/bootstrap.sh
+# Run it again after changing MODULES: the firewall and some modules' host settings depend on it.
 # Not covered: netplan/Wi-Fi, hostname, router settings.
 set -euo pipefail
 [[ $EUID -eq 0 ]] || { echo "Run with sudo." >&2; exit 1; }
 repo="$(cd "$(dirname "$0")" && pwd)"
-source "$repo/config.env"
+source "$repo/lib.sh"
+load_config
 read -ra TRUSTED <<<"$TRUSTED_NETS"
 
 log() { printf '\n== %s\n' "$*"; }
@@ -28,11 +31,12 @@ PermitRootLogin no
 EOF
 systemctl reload ssh
 
-log "systemd-resolved: free port 53 for Pi-hole"
-mkdir -p /etc/systemd/resolved.conf.d
-printf '[Resolve]\nDNSStubListener=no\n' >/etc/systemd/resolved.conf.d/90-pihole.conf
-ln -sf /run/systemd/resolve/resolv.conf /etc/resolv.conf
-systemctl restart systemd-resolved
+for m in $(enabled_modules); do
+  if [[ -f $repo/stacks/$m/root-setup.sh ]]; then
+    log "Host settings for $m"
+    source "$repo/stacks/$m/root-setup.sh"
+  fi
+done
 
 log "Disk: grow the root volume to fill the disk"
 # Ubuntu's installer leaves part of the disk unallocated by default.
@@ -73,16 +77,35 @@ if ! tailscale status >/dev/null 2>&1; then
   # The server keeps using the router for its own DNS; Pi-hole serves the tailnet.
   tailscale up --accept-dns=false
 fi
-echo "Tailscale IP (put it in config.env as TAILSCALE_IP): $(tailscale ip -4)"
+echo "Tailscale IP: $(tailscale ip -4)"
 
 log "Firewall"
+# SSH and Caddy, plus what the enabled modules need: their own ports (FIREWALL_PORTS) and,
+# without Pi-hole's names, the port Caddy serves each one on (PORT).
+open_ports=" 22 80 443 "
+for m in $(enabled_modules); do
+  for port in $(module_var "$m" FIREWALL_PORTS); do open_ports+="$port "; done
+  if ! has_module pihole; then
+    for port in $(module_var "$m" PORT); do open_ports+="$port "; done
+  fi
+done
+# Ports of disabled modules, or of a mode no longer in use, get closed again.
+closed_ports=()
+for m in $(all_modules); do
+  for port in $(module_var "$m" FIREWALL_PORTS) $(module_var "$m" PORT); do
+    [[ $open_ports == *" $port "* ]] || closed_ports+=("$port")
+  done
+done
 ufw default deny incoming >/dev/null
 ufw default allow outgoing >/dev/null
 for src in "${TRUSTED[@]}"; do
-  for port in 22 53 80 443 8642 9119; do
+  for port in $open_ports; do
     ufw allow from "$src" to any port "$port" >/dev/null
   done
   ufw allow from "$src" to any port 5353 proto udp >/dev/null
+  for port in "${closed_ports[@]}"; do
+    ufw delete allow from "$src" to any port "$port" >/dev/null 2>&1 || true
+  done
 done
 ufw allow in on tailscale0 >/dev/null
 # SSH only from TRUSTED_NETS and Tailscale (added above); older versions allowed it from anywhere.
@@ -112,4 +135,8 @@ ufw --force enable
 ufw reload >/dev/null
 ufw status | head -3
 
-log "Done. Next, from your computer: ./deploy.sh"
+# setup.sh compares this with its own copy to see whether bootstrap needs to run again.
+install -d /var/lib/homelab-agent
+bootstrap_fingerprint >/var/lib/homelab-agent/bootstrap-fingerprint
+
+log "Done. Next: ./setup.sh continues by itself; by hand, run ./deploy.sh from your computer."

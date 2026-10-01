@@ -1,0 +1,10 @@
+# Used when Hermes is enabled too: n8n joins Hermes' network, so workflows can call Hermes'
+# OpenAI-compatible API at http://hermes:8642/v1 (and Hermes can reach n8n).
+services:
+  n8n:
+    networks: [hermes]
+
+networks:
+  hermes:
+    name: hermes_default   # created by the hermes stack, which install.sh starts first
+    external: true

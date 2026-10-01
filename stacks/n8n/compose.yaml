@@ -1,12 +1,12 @@
-# n8n workflow automation. Served by Caddy at n8n.<DOMAIN>.
-# Hermes' OpenAI-compatible API is reachable from workflows at http://hermes:8642/v1.
+# n8n workflow automation. Served by Caddy at n8n.<DOMAIN> (or <server>:8002 without Pi-hole).
+# With Hermes enabled, compose.with-hermes.yaml lets workflows call Hermes' API.
 services:
   n8n:
     image: docker.n8n.io/n8nio/n8n:latest
     container_name: n8n
     # Own bridge network, so n8n (which runs workflow code) can't reach the other services'
-    # 127.0.0.1 ports. Also joins Hermes' network to call its API; Hermes can reach n8n too.
-    networks: [default, hermes]
+    # 127.0.0.1 ports.
+    networks: [default]
     ports:
       - "127.0.0.1:5678:5678"   # for Caddy
     # Fixed DNS: at boot Docker can start this before the network has handed the server a DNS
@@ -16,9 +16,10 @@ services:
     environment:
       N8N_LISTEN_ADDRESS: 0.0.0.0
       N8N_PORT: "5678"
-      N8N_HOST: n8n.${DOMAIN}
+      # Where n8n is reached; install.sh sets them from Caddy's name or port for n8n.
+      N8N_HOST: ${SITE_HOST}
       N8N_PROTOCOL: http
-      WEBHOOK_URL: http://n8n.${DOMAIN}/
+      WEBHOOK_URL: ${SITE_URL}
       N8N_PROXY_HOPS: "1"
       # Plain HTTP behind Caddy; without this n8n refuses to log in over http.
       N8N_SECURE_COOKIE: "false"
@@ -32,8 +33,3 @@ services:
       # Includes n8n's encryption key (config); without it, saved credentials are unreadable.
       - ./data:/home/node/.n8n
     restart: unless-stopped
-
-networks:
-  hermes:
-    name: hermes_default   # created by the hermes stack, which install.sh starts first
-    external: true

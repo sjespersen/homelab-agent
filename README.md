@@ -39,7 +39,7 @@ is rebuilt from the repo plus the latest backup.
 5. On the server, in a real terminal: `sudo bash ~/homelab-agent/bootstrap.sh`
    (installs Docker, restic, Tailscale and the firewall; switches SSH to keys only).
    Open the Tailscale login link it prints.
-6. Put the Tailscale IP it prints into `config.env` as `TAILSCALE_IP`, then run `./deploy.sh` again.
+6. Run `./deploy.sh` again; it picks up the Tailscale IP by itself.
 7. Set up Hermes (model, login, chat apps):
    `ssh -t <server> 'cd /opt/stacks/hermes && docker compose run --rm -it gateway setup'`,
    then `./deploy.sh` once more to start it.
@@ -52,10 +52,39 @@ is rebuilt from the repo plus the latest backup.
 
 Total time: about an hour, most of it waiting for downloads.
 
+## Modules
+
+Pick the services in `config.env`:
+
+```sh
+MODULES="pihole hermes n8n uptime-kuma beszel"   # the default: everything
+MODULES="hermes"                                 # just the agent
+```
+
+Caddy, the firewall, Tailscale and backups are always on. Turning a module off stops its
+containers and closes its ports; its data stays in `/opt/stacks/<module>` (and in the backups).
+
+Without Pi-hole nobody hands out the `*.home.arpa` names, so Caddy serves each service on its
+own port instead: Hermes `:8001`, n8n `:8002`, Uptime Kuma `:8003`, Beszel `:8004`, all linked
+from `http://<name>.local`.
+
+A module is a folder in `stacks/`:
+
+| File | What it's for |
+|---|---|
+| `compose.yaml` | The containers. Reads `${TZ}`, `${DOMAIN}`, `${PUID}`, `${SITE_URL}` and friends |
+| `module.env` | Title, start order, name/port behind Caddy, firewall ports, containers to stop for backups |
+| `site.caddy` | What Caddy does for its name or port (usually one `reverse_proxy` line) |
+| `compose.with-<module>.yaml` | Added only when that other module is on (n8n joins Hermes' network) |
+| `backup-excludes.txt`, `after-up.sh`, `root-setup.sh` | Optional: caches to skip, a step after start, host setup as root |
+
+To add your own service, copy a module like `uptime-kuma`, add it to `MODULES`, and run
+`bootstrap.sh` and `./deploy.sh`.
+
 ## Change something
 
-Edit a compose file in `stacks/` or `stacks/caddy/conf/Caddyfile`, then `./deploy.sh`.
-Compose files read `${TZ}`, `${DOMAIN}` and friends from `config.env`.
+Edit a compose file in `stacks/`, then `./deploy.sh`. After changing `MODULES`, run
+`bootstrap.sh` first (it opens and closes the firewall ports).
 
 Update all images about once a month: `./deploy.sh --update`. It takes a backup first, so you
 can roll back with restic if a new version breaks something.
@@ -74,7 +103,9 @@ agent) gets a lot. Read this before you put anything valuable on the box.
   Tailscale. That includes the ports Docker publishes, which normally skip ufw (`bootstrap.sh`
   adds matching rules to Docker's `DOCKER-USER` chain).
   Pi-hole, n8n, Uptime Kuma and Beszel listen on `127.0.0.1` only; outside the box they are
-  reachable only through Caddy.
+  reachable only through Caddy. Without Pi-hole, Caddy's ports for them (8001–8004) get the
+  same `TRUSTED_NETS` and Tailscale limits.
+- Only the modules you enable run, and only their ports are open.
 - Hermes and n8n, the two containers that run code from outside, sit on Docker bridge networks.
   They can't reach the other services' ports or Caddy (ufw drops traffic from Docker networks).
 - The Beszel agent talks to Docker through a read-only proxy, not the Docker socket.
@@ -92,9 +123,9 @@ WhatsApp session can read and send as you), API keys and GitHub deploy keys.
 *Reduce it:* give it only the keys it needs; keep the chat apps on an allowlist of your own
 accounts; don't connect it to inboxes or accounts you can't afford to leak.
 
-**2. Partial isolation between containers.** Hermes and n8n are on bridge networks, but they
-share one (so workflows can call `http://hermes:8642/v1`): a compromised Hermes can reach n8n's
-login and webhooks, and the other way round. Pi-hole, Caddy, Uptime Kuma and Beszel still use
+**2. Partial isolation between containers.** Hermes and n8n are on bridge networks, but when
+both are enabled they share one (so workflows can call `http://hermes:8642/v1`): a compromised
+Hermes can reach n8n's login and webhooks, and the other way round. Pi-hole, Caddy, Uptime Kuma and Beszel still use
 host networking and can reach each other's `127.0.0.1` ports, including the read-only Docker
 proxy on port 2375 (see 3).
 *Reduce it:* use strong, unique passwords for every web UI, and authentication on n8n
@@ -166,7 +197,7 @@ every boot); keep the box somewhere it won't walk off.
 
 - Every night at `BACKUP_TIME` the server stops the containers that use SQLite (~15 s), takes
   a restic snapshot of `/opt/stacks` into `~/backups/restic`, and keeps 7 daily, 4 weekly and
-  6 monthly snapshots. Caches are excluded (`backup/excludes.txt`).
+  6 monthly snapshots. Caches are excluded (each module's `backup-excludes.txt`).
 - The Mac copies that repo to `~/Backups/<name>/restic` once a day while awake. Its SSH key is
   limited to read-only rsync of that one folder, so a stolen Mac can't touch the server.
 - The repo password is in `~/.config/restic/password` on the server and in the Mac Keychain
