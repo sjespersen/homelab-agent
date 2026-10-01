@@ -34,8 +34,10 @@ rmdir /opt/stacks/pihole/data 2>/dev/null || true  # Pi-hole uses etc-pihole/
 
 for s in "${stacks[@]}"; do
   echo "== $s"
-  docker compose --project-directory "/opt/stacks/$s" up -d --pull missing --remove-orphans
+  docker compose --project-directory "/opt/stacks/$s" up -d --pull "${PULL:-missing}" --remove-orphans
 done
+
+[[ ${PULL:-} != always ]] || docker image prune -f  # images the update replaced
 
 # Containers don't notice edited config files; reload Caddy so Caddyfile changes apply.
 docker exec caddy caddy reload --config /etc/caddy/Caddyfile

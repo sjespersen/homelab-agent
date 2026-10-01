@@ -21,8 +21,27 @@ services:
       # Only the hub holding the matching private key may connect. The hub creates the key on
       # first start; until then the agent exits and is restarted.
       KEY_FILE: /hub/id_ed25519.pub
+      # Per-container stats through the read-only proxy below, not the Docker socket itself.
+      DOCKER_HOST: tcp://127.0.0.1:2375
     volumes:
       - ./data:/hub:ro
-      # Docker API for per-container stats. Note: socket access is root-equivalent.
+    restart: unless-stopped
+
+  # Passes on only the Docker API reads the agent needs (container list, inspect, stats, logs,
+  # info); anything that changes state is refused. Mounting the socket directly would give the
+  # agent root on the host, even with :ro.
+  socket-proxy:
+    image: lscr.io/linuxserver/socket-proxy:latest
+    container_name: beszel-socket-proxy
+    environment:
+      CONTAINERS: "1"
+      INFO: "1"
+      POST: "0"
+    ports:
+      - "127.0.0.1:2375:2375"
+    volumes:
       - /var/run/docker.sock:/var/run/docker.sock:ro
+    read_only: true
+    tmpfs:
+      - /run
     restart: unless-stopped

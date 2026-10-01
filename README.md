@@ -57,6 +57,9 @@ Total time: about an hour, most of it waiting for downloads.
 Edit a compose file in `stacks/` or `stacks/caddy/conf/Caddyfile`, then `./deploy.sh`.
 Compose files read `${TZ}`, `${DOMAIN}` and friends from `config.env`.
 
+Update all images about once a month: `./deploy.sh --update`. It takes a backup first, so you
+can roll back with restic if a new version breaks something.
+
 ## Security
 
 This is a home lab, not a hardened production setup. The defaults keep everything off the
@@ -69,8 +72,10 @@ agent) gets a lot. Read this before you put anything valuable on the box.
 - ufw blocks DNS and the web UIs from everywhere except `TRUSTED_NETS` and Tailscale.
   Pi-hole, n8n, Uptime Kuma and Beszel listen on `127.0.0.1` only; outside the box they are
   reachable only through Caddy.
-- Hermes runs on its own Docker bridge network and publishes only ports 8642 and 9119. It
-  can't reach the other services' ports or Caddy (ufw drops traffic from Docker networks).
+- Hermes and n8n, the two containers that run code from outside, sit on Docker bridge networks.
+  They can't reach the other services' ports or Caddy (ufw drops traffic from Docker networks).
+- The Beszel agent talks to Docker through a read-only proxy, not the Docker socket.
+- n8n's Execute Command and Local File Trigger nodes are off.
 - Hermes pushes to GitHub with per-repo deploy keys, not your account.
 - The Mac's backup key can only read the backup folder (`rrsync -ro`).
 - Backups are encrypted with restic.
@@ -84,27 +89,28 @@ WhatsApp session can read and send as you), API keys and GitHub deploy keys.
 *Reduce it:* give it only the keys it needs; keep the chat apps on an allowlist of your own
 accounts; don't connect it to inboxes or accounts you can't afford to leak.
 
-**2. Little isolation between containers.** Every stack except Hermes uses host networking,
-so n8n, Uptime Kuma, Beszel and Pi-hole can reach each other's `127.0.0.1` ports without going
-through Caddy. A compromised n8n can attack the rest directly; each service's own login is the
-only barrier. Hermes is on a bridge network, but its published ports have a catch: Docker's
-port rules skip ufw for IPv4, so anything that reaches the server's IPv4 address can reach
-8642 and 9119, whatever `TRUSTED_NETS` says. With the defaults that is your LAN and tailnet,
-which are trusted anyway; it matters once you narrow `TRUSTED_NETS` (see 5). IPv6 still goes
-through ufw.
-*Reduce it:* use strong, unique passwords for every web UI. Move more stacks to bridge
-networks (n8n next: it can run code). To make ufw apply to published ports, add rules to the
-`DOCKER-USER` chain.
+**2. Partial isolation between containers.** Hermes and n8n are on bridge networks, but they
+share one (so workflows can call `http://hermes:8642/v1`): a compromised Hermes can reach n8n's
+login and webhooks, and the other way round. Pi-hole, Caddy, Uptime Kuma and Beszel still use
+host networking and can reach each other's `127.0.0.1` ports, including the read-only Docker
+proxy on port 2375 (see 3). Hermes' published ports have a catch: Docker's port rules skip ufw
+for IPv4, so anything that reaches the server's IPv4 address can reach 8642 and 9119, whatever
+`TRUSTED_NETS` says. With the defaults that is your LAN and tailnet, which are trusted anyway;
+it matters once you narrow `TRUSTED_NETS` (see 5). IPv6 still goes through ufw.
+*Reduce it:* use strong, unique passwords for every web UI, and authentication on n8n
+webhooks. To make ufw apply to published ports, add rules to the `DOCKER-USER` chain.
 
 **3. Several paths to root.** Anything that controls Docker controls the host:
-- The Beszel agent mounts the Docker socket. `:ro` does not limit the Docker API, so a
-  compromised Beszel image or agent is root on the host.
 - Your user is in the `docker` group, so your SSH key is effectively a root key, and the sudo
   password doesn't protect anything.
-- n8n workflows can run code (Code node, Execute Command node) on the host network.
-*Reduce it:* protect your SSH key with a passphrase; drop the socket mount from
-`stacks/beszel/compose.yaml` if you don't need per-container stats; make sure n8n's Execute
-Command node is off (`NODES_EXCLUDE`; newer n8n versions turn it off by default).
+- The socket proxy for Beszel mounts the Docker socket. It only passes on reads (container
+  list, inspect, stats, logs; server info), so a compromised Beszel agent can't start
+  containers. The proxy image itself is trusted with root. The reads still expose every
+  container's environment variables and logs to anything on the host network (port 2375 on
+  `127.0.0.1`), so keep secrets out of compose `environment:` (Hermes and n8n keep theirs in
+  `data/`).
+*Reduce it:* protect your SSH key with a passphrase; remove the `socket-proxy` service and
+`DOCKER_HOST` from `stacks/beszel/compose.yaml` if you don't need per-container stats.
 
 **4. Ransomware can reach the backups.** Anyone who controls the server can delete or encrypt
 `~/backups/restic` (the password sits next to it in `~/.config/restic/password`). The Mac
@@ -137,8 +143,9 @@ that your router blocks incoming IPv6.
 maintainers publish next. `--pull missing` never updates them on its own, so known holes stay
 until you update. Ubuntu installs its own security updates (unattended-upgrades); containers
 don't.
-*Reduce it:* update monthly (`docker compose pull && docker compose up -d` in each stack);
-pin versions where you care; follow the release notes for Hermes and n8n.
+*Reduce it:* update monthly with `./deploy.sh --update` (takes a backup first, then pulls
+newer images for every stack); pin versions where you care; follow the release notes for
+Hermes and n8n.
 
 **9. Secrets at rest.** Ubuntu's default install has no disk encryption, so whoever takes the
 box gets every key and session on it. Secrets also sit in plain files under `/opt/stacks`
