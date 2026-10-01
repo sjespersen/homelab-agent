@@ -1,0 +1,10 @@
+# Sourced files are chosen at runtime (config.env, module.env, root-setup.sh).
+disable=SC1090,SC1091
+# Variables set via printf -v / eval / ${!name}, which shellcheck can't see.
+disable=SC2034,SC2154
+# Commands for ssh are built locally on purpose.
+disable=SC2029
+# Word splitting of module lists and `echo $(...)` to flatten lines are intended.
+disable=SC2005,SC2046,SC2086,SC2116,SC2207
+# Sourced files and module hooks are bash.
+shell=bash

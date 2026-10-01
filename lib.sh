@@ -61,7 +61,7 @@ bootstrap_fingerprint() {
   local sum=sha256sum
   command -v sha256sum >/dev/null || sum="shasum -a 256"
   (
-    cd "$repo"
+    cd "$repo" || exit
     cat bootstrap.sh lib.sh config.env stacks/*/module.env stacks/*/root-setup.sh extras/it87-fan/*.s* 2>/dev/null
   ) | $sum | cut -c1-16
 }
