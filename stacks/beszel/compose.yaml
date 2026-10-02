@@ -2,7 +2,7 @@
 # The agent reads host stats and the Docker API; the hub stores history and serves the UI.
 services:
   beszel:
-    image: henrygd/beszel:latest
+    image: henrygd/beszel:latest@sha256:897e807a065adf8e89e30ae0cd79d1f5e38fe84ccaffbc418bde9d3cdca4eacc  # 0.20.0
     container_name: beszel
     network_mode: host
     # Run as your user so the nightly backup can read ./data.
@@ -13,7 +13,7 @@ services:
     restart: unless-stopped
 
   beszel-agent:
-    image: henrygd/beszel-agent:latest
+    image: henrygd/beszel-agent:latest@sha256:765e3d4a087c4bcbf6b78ed0f1dfdcd669c4bf6ad5789a832d2944603ae7fd08  # 0.20.0
     container_name: beszel-agent
     network_mode: host
     environment:
@@ -31,7 +31,7 @@ services:
   # info); anything that changes state is refused. Mounting the socket directly would give the
   # agent root on the host, even with :ro.
   socket-proxy:
-    image: lscr.io/linuxserver/socket-proxy:latest
+    image: lscr.io/linuxserver/socket-proxy:latest@sha256:0357c479cc98e863917d1cd8b10e83d35a50ca46a0788f5a192bf792c3b7100d  # 3.4.6-r0-ls100
     container_name: beszel-socket-proxy
     environment:
       CONTAINERS: "1"

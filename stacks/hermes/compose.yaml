@@ -2,7 +2,7 @@
 # First-time setup: docker compose run --rm -it gateway setup
 services:
   gateway:
-    image: nousresearch/hermes-agent:latest
+    image: nousresearch/hermes-agent:latest@sha256:d4da4a40cd7a28aba983775d9fd31d94cbf153eeb0cb9e844d6d0f612b7c24db  # built 2026-09-24
     container_name: hermes
     # Own bridge network, not the host's: Hermes can't reach the other services' 127.0.0.1
     # ports. Only the two ports below are published (on all addresses; see README for ufw).

@@ -2,7 +2,8 @@
 # From your computer: copy this repo to the server and apply it (stacks + backup timer).
 # For a new server, or after changing MODULES, use ./setup.sh: it also runs bootstrap.sh.
 #   ./deploy.sh            apply config.env and the stacks
-#   ./deploy.sh --update   take a backup first, then pull newer images for every stack
+#   ./deploy.sh --update   take a backup, move the image pins to the newest builds
+#                          (update-images.sh), apply; then commit the changed compose files
 #   ./deploy.sh --status   what's running, where, and how the backups are doing
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -23,7 +24,14 @@ if [[ ${1:-} == --update ]]; then
   pull=always
   echo "== backup before updating"
   ssh "$host" 'systemctl --user start homelab-backup.service'
+  ./update-images.sh
 fi
 
 rsync -a --delete --exclude .git --exclude mac ./ "$host:homelab-agent/"
 ssh "$host" "PULL=$pull bash ~/homelab-agent/install.sh"
+
+if [[ $pull == always ]] && ! git diff --quiet -- stacks; then
+  echo
+  echo "Running the new versions. If they work, keep them:  git commit -am 'Update images'"
+  echo "If not, go back:  git checkout -- stacks && ./deploy.sh"
+fi

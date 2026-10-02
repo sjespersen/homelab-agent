@@ -2,7 +2,7 @@
 # the LAN or inside Tailscale's encrypted tunnel.
 services:
   caddy:
-    image: caddy:2
+    image: caddy:2@sha256:0c994536bddb66445885237f1a5dcc1916bccea922661c76b4e9fc24061f9b52  # v2.11.4
     container_name: caddy
     network_mode: host
     volumes:

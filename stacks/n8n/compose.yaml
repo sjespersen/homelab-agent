@@ -2,7 +2,7 @@
 # With Hermes enabled, compose.with-hermes.yaml lets workflows call Hermes' API.
 services:
   n8n:
-    image: docker.n8n.io/n8nio/n8n:latest
+    image: docker.n8n.io/n8nio/n8n:latest@sha256:3cd1d3a03f5e059a0757d8c95823ff09ef61d3b6bf7fcb4ac3ac5fd5303b6c6d  # 2.41.4
     container_name: n8n
     # Own bridge network, so n8n (which runs workflow code) can't reach the other services'
     # 127.0.0.1 ports.

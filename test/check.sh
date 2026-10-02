@@ -1,10 +1,17 @@
 #!/usr/bin/env bash
 # Renders config.example.env with several MODULES combinations and checks that every compose
-# file parses and (when Docker is running) that Caddy accepts its config. CI runs this.
+# file parses and (when Docker is running) that Caddy accepts its config. Also checks that
+# every image is pinned by digest. CI runs this.
 set -euo pipefail
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
+
+# Rebuilds must install exactly what the repo says: every image pinned by digest.
+if grep -n '^ *image:' "$repo"/stacks/*/compose.yaml | grep -v '@sha256:[0-9a-f]\{64\}'; then
+  echo "The images above aren't pinned by digest; run ./update-images.sh." >&2
+  exit 1
+fi
 
 combos=(
   "pihole hermes n8n uptime-kuma beszel"

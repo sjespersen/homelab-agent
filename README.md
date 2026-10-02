@@ -103,8 +103,22 @@ Edit a compose file in `stacks/`, then `./deploy.sh`. To add or remove services,
 
 See what's running, where, and when the last backup ran: `./deploy.sh --status`.
 
-Update all images about once a month: `./deploy.sh --update`. It takes a backup first, so you
-can roll back with restic if a new version breaks something.
+### Versions and updates
+
+Every image is pinned by digest in its compose file, so a deploy or a rebuild installs exactly
+what the repo says, today or a year from now:
+
+```yaml
+image: caddy:2@sha256:0c99...  # v2.11.4   (the tag it follows, the exact build, the version)
+```
+
+Update about once a month with `./deploy.sh --update`: it takes a backup, moves each pin to the
+newest build of its tag (`update-images.sh`), shows what changed and deploys. If everything
+works, commit the compose files; if not, `git checkout -- stacks && ./deploy.sh` goes back to
+the old images, and restic has the data from before the update.
+
+Not pinned: Ubuntu's packages (Docker, restic; they get Ubuntu's security updates), Tailscale,
+and the tools Hermes installs into its data folder at runtime (those are in the backups).
 
 ## Security
 
@@ -180,13 +194,12 @@ account can reach every port on the box.
 [Tailscale ACLs](https://tailscale.com/kb/1018/acls) to limit who reaches the server; remove
 old devices.
 
-**7. Unpinned, unupdated images.** Most images use `:latest`, so you trust whatever the
-maintainers publish next. `--pull missing` never updates them on its own, so known holes stay
-until you update. Ubuntu installs its own security updates (unattended-upgrades); containers
-don't.
-*Reduce it:* update monthly with `./deploy.sh --update` (takes a backup first, then pulls
-newer images for every stack); pin versions where you care; follow the release notes for
-Hermes and n8n.
+**7. Images only update when you update them.** Every image is pinned by digest, so nothing
+changes behind your back, but known holes also stay until you run `./deploy.sh --update`.
+Ubuntu installs its own security updates (unattended-upgrades); containers don't. And when you
+do update, you trust whatever the maintainers published since.
+*Reduce it:* update monthly; read the release notes for Hermes and n8n before committing the
+new pins.
 
 **8. Secrets at rest.** Ubuntu's default install has no disk encryption, so whoever takes the
 box gets every key and session on it. Secrets also sit in plain files under `/opt/stacks`
@@ -233,6 +246,7 @@ RESTIC_PASSWORD_COMMAND='security find-generic-password -s <name>-restic -w' \
 ## Rebuild from scratch
 
 1. Install Ubuntu and run `./setup.sh` with your existing `config.env`; skip Hermes' setup.
+   You get the same image versions as before: they're pinned in the repo.
 2. Stop the containers, then restore the app data from the Mac copy:
    ```sh
    restic -r ~/Backups/<name>/restic restore latest --target /tmp/restore
