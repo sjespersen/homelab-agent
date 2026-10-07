@@ -283,6 +283,8 @@ Revoke access any time by deleting the deploy key on GitHub.
 
 - `extras/it87-fan/`: makes the fan quieter on boards whose BIOS sets a loud minimum fan speed
   (many ITE IT87xx Super I/O chips). See its README.
+- `extras/wifi-watchdog/`: reconnects Wi-Fi when it stays connected but stops passing traffic.
+  See its README.
 
 ## Not covered
 

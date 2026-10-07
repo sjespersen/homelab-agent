@@ -53,6 +53,7 @@ detect() {
   printf 'D_NET4=%q\n' "$(ip -4 route show dev "$dev" scope link proto kernel 2>/dev/null | awk '{ print $1; exit }')"
   # The global IPv6 /64 your router hands out, if any.
   printf 'D_NET6=%q\n' "$(ip -6 route show dev "$dev" 2>/dev/null | awk '$1 ~ /^[23][0-9a-f]*:.*\/64$/ { print $1; exit }')"
+  printf 'D_WIFI=%q\n' "$([[ -d /sys/class/net/$dev/wireless ]] && echo "$dev")"
   printf 'D_IT87=%q\n' "$(grep -qs '^it8' /sys/class/hwmon/hwmon*/name && echo yes)"
   printf 'D_KEYS=%q\n' "$([[ -s ~/.ssh/authorized_keys ]] && echo yes)"
 }
@@ -140,6 +141,10 @@ if [[ -n $D_IT87 || -n ${IT87_FAN_MIN_PWM:-} ]]; then
   ask IT87_FAN_MIN_PWM "Fan minimum speed, 0-255 (empty: leave as is; see extras/it87-fan)" "${IT87_FAN_MIN_PWM:-}"
 fi
 
+if [[ -n $D_WIFI || -n ${WIFI_WATCHDOG_IFACE:-} ]]; then
+  ask WIFI_WATCHDOG_IFACE "Wi-Fi interface to watch and reconnect when stuck (empty: off; see extras/wifi-watchdog)" "${WIFI_WATCHDOG_IFACE-$D_WIFI}"
+fi
+
 # Everything else is detected or has a sensible default; config.env is yours to edit.
 LAN_IP=${LAN_IP:-$D_LAN_IP}
 TAILSCALE_IP=${TAILSCALE_IP:-}
@@ -152,6 +157,7 @@ TZ=${TZ:-${D_TZ:-UTC}}
 DOMAIN=${DOMAIN:-home.arpa}
 BACKUP_TIME=${BACKUP_TIME:-04:00}
 IT87_FAN_MIN_PWM=${IT87_FAN_MIN_PWM:-}
+WIFI_WATCHDOG_IFACE=${WIFI_WATCHDOG_IFACE:-}
 
 # config.example.env with your values: same order, same comments.
 tmp=$(mktemp)
