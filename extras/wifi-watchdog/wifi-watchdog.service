@@ -1,0 +1,7 @@
+[Unit]
+Description=Reconnect Wi-Fi (@IFACE@) when traffic stops flowing
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/wifi-watchdog.sh @IFACE@

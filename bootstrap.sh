@@ -68,6 +68,21 @@ if [[ -n ${IT87_FAN_MIN_PWM:-} ]]; then
   systemctl restart it87-fan-min.service
 fi
 
+if [[ -n ${WIFI_WATCHDOG_IFACE:-} ]]; then
+  log "Wi-Fi watchdog: reconnect $WIFI_WATCHDOG_IFACE when traffic stops flowing"
+  install -m 755 "$repo/extras/wifi-watchdog/wifi-watchdog.sh" /usr/local/sbin/wifi-watchdog.sh
+  sed "s|@IFACE@|$WIFI_WATCHDOG_IFACE|" "$repo/extras/wifi-watchdog/wifi-watchdog.service" \
+    >/etc/systemd/system/wifi-watchdog.service
+  install -m 644 "$repo/extras/wifi-watchdog/wifi-watchdog.timer" /etc/systemd/system/
+  systemctl daemon-reload
+  systemctl enable --now wifi-watchdog.timer
+elif [[ -f /etc/systemd/system/wifi-watchdog.timer ]]; then
+  log "Wi-Fi watchdog: off"
+  systemctl disable --now wifi-watchdog.timer
+  rm -f /etc/systemd/system/wifi-watchdog.{service,timer} /usr/local/sbin/wifi-watchdog.sh
+  systemctl daemon-reload
+fi
+
 log "Tailscale"
 if ! command -v tailscale >/dev/null; then
   curl -fsSL https://tailscale.com/install.sh | sh
