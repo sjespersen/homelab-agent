@@ -6,6 +6,6 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: shellcheck
-        run: shellcheck -x *.sh backup/*.sh mac/*.sh test/*.sh stacks/*/*.sh extras/*/*.sh
+        run: shellcheck -x *.sh backup/*.sh mac/*.sh test/*.sh stacks/*/*.sh stacks/*/host/*.sh stacks/*/wake/*.sh extras/*/*.sh
       - name: Render every module combination
         run: test/check.sh

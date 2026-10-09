@@ -19,6 +19,14 @@ apt-get update -q
 apt-get install -y -q docker.io docker-compose-v2 avahi-daemon libnss-mdns restic rsync ufw curl
 usermod -aG docker "$SERVER_USER"
 
+log "mDNS: ${MDNS_INTERFACES:-all interfaces}"
+if [[ -n ${MDNS_INTERFACES:-} ]]; then
+  sed -i -E "s/^#?allow-interfaces=.*/allow-interfaces=${MDNS_INTERFACES// /,}/" /etc/avahi/avahi-daemon.conf
+else
+  sed -i -E 's/^allow-interfaces=/#allow-interfaces=/' /etc/avahi/avahi-daemon.conf
+fi
+systemctl restart avahi-daemon
+
 log "SSH: keys only, no root login"
 if [[ ! -s /home/$SERVER_USER/.ssh/authorized_keys ]]; then
   echo "No SSH key for $SERVER_USER yet; run ssh-copy-id first, or you'd be locked out." >&2
@@ -83,6 +91,21 @@ elif [[ -f /etc/systemd/system/wifi-watchdog.timer ]]; then
   systemctl daemon-reload
 fi
 
+if [[ -n ${WAKE_ON_LAN_IFACE:-} ]]; then
+  log "Wake-on-LAN on $WAKE_ON_LAN_IFACE"
+  sed "s|@IFACE@|$WAKE_ON_LAN_IFACE|g" "$repo/extras/wake-on-lan/wake-on-lan.service" \
+    >/etc/systemd/system/wake-on-lan.service
+  systemctl daemon-reload
+  systemctl enable wake-on-lan.service
+  systemctl restart wake-on-lan.service
+  ethtool "$WAKE_ON_LAN_IFACE" | grep -E '^\s*Wake-on' || true
+elif [[ -f /etc/systemd/system/wake-on-lan.service ]]; then
+  log "Wake-on-LAN: off"
+  systemctl disable --now wake-on-lan.service
+  rm -f /etc/systemd/system/wake-on-lan.service
+  systemctl daemon-reload
+fi
+
 log "Tailscale"
 if ! command -v tailscale >/dev/null; then
   curl -fsSL https://tailscale.com/install.sh | sh
@@ -101,13 +124,13 @@ open_ports=" 22 80 443 "
 for m in $(enabled_modules); do
   for port in $(module_var "$m" FIREWALL_PORTS); do open_ports+="$port "; done
   if ! has_module pihole; then
-    for port in $(module_var "$m" PORT); do open_ports+="$port "; done
+    for port in $(module_ports "$m"); do open_ports+="$port "; done
   fi
 done
 # Ports of disabled modules, or of a mode no longer in use, get closed again.
 closed_ports=()
 for m in $(all_modules); do
-  for port in $(module_var "$m" FIREWALL_PORTS) $(module_var "$m" PORT); do
+  for port in $(module_var "$m" FIREWALL_PORTS) $(module_ports "$m"); do
     [[ $open_ports == *" $port "* ]] || closed_ports+=("$port")
   done
 done

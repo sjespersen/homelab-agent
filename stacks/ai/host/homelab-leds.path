@@ -1,0 +1,8 @@
+[Unit]
+Description=Apply the LED switch when the Local AI page changes it
+
+[Path]
+PathChanged=@DIR@/leds
+
+[Install]
+WantedBy=multi-user.target

@@ -40,22 +40,22 @@ if has_module pihole; then
 fi
 for m in "${modules[@]}"; do
   [[ -f $repo/stacks/$m/landing.caddy ]] && landing+="$(<"$repo/stacks/$m/landing.caddy")"$'\n'
-  host=$(module_var "$m" HOST)
-  port=$(module_var "$m" PORT)
-  [[ -n $host ]] || continue
-  if has_module pihole; then
-    names+=" $host.$DOMAIN"
-    address="http://$host.$DOMAIN"
-    url="http://$host.$DOMAIN"
-  elif [[ -n $port ]]; then
-    address="http://:$port"
-    url="http://{{.Host}}:$port"  # a Caddy template: whatever address the page was opened at
-  else
-    continue
-  fi
-  sites+="$address {"$'\n'"$(sed 's/^/\t/' "$repo/stacks/$m/site.caddy")"$'\n}\n\n'
-  link=$(module_var "$m" LINK)
-  links+="  <a href=\"${link:-$url}\">$(module_var "$m" TITLE) <span>— $(module_var "$m" DESCRIPTION)</span></a>"$'\n'
+  while read -r site host port file; do
+    [[ $port != - ]] || port=""
+    if has_module pihole; then
+      names+=" $host.$DOMAIN"
+      address="http://$host.$DOMAIN"
+      url="http://$host.$DOMAIN"
+    elif [[ -n $port ]]; then
+      address="http://:$port"
+      url="http://{{.Host}}:$port"  # a Caddy template: whatever address the page was opened at
+    else
+      continue
+    fi
+    sites+="$address {"$'\n'"$(sed 's/^/\t/' "$repo/stacks/$m/$file")"$'\n}\n\n'
+    link=$(module_site_var "$m" "$site" LINK)
+    links+="  <a href=\"${link:-$url}\">$(module_site_var "$m" "$site" TITLE) <span>— $(module_site_var "$m" "$site" DESCRIPTION)</span></a>"$'\n'
+  done < <(module_sites "$m")
 done
 
 # Pi-hole answers these names with the server's LAN or Tailscale address; dnsmasq's
@@ -67,7 +67,7 @@ mkdir -p "$stacks_dir"
 for m in "${modules[@]}"; do
   dir=$stacks_dir/$m
   rsync -a --exclude module.env --exclude '*.caddy' --exclude '*.sh' --exclude backup-excludes.txt \
-    --exclude landing.html "$repo/stacks/$m/" "$dir/"
+    --exclude landing.html --exclude README.md --exclude /host/ "$repo/stacks/$m/" "$dir/"
   # Create data dirs ourselves; Docker would create them owned by root.
   if grep -q '\./data' "$dir/compose.yaml"; then mkdir -p "$dir/data"; fi
 
@@ -86,9 +86,15 @@ for m in "${modules[@]}"; do
     if has_module "${other%.yaml}"; then COMPOSE_FILE+=":${f##*/}"; fi
   done
   # Compose reads these from .env, so a plain `docker compose ...` in the directory works too.
-  for v in NAME DOMAIN LAN_IP TZ PUID PGID PIHOLE_HOSTS SITE_HOST SITE_URL COMPOSE_FILE; do
-    printf '%s="%s"\n' "$v" "${!v}"
-  done >"$dir/.env"
+  {
+    for v in NAME DOMAIN LAN_IP TZ PUID PGID PIHOLE_HOSTS SITE_HOST SITE_URL COMPOSE_FILE; do
+      printf '%s="%s"\n' "$v" "${!v}"
+    done
+    # The module's own settings (ENV in module.env), with the defaults module.env gives them.
+    for v in $(module_var "$m" ENV); do
+      printf '%s="%s"\n' "$v" "$(module_var "$m" "$v")"
+    done
+  } >"$dir/.env"
 done
 
 caddy=$stacks_dir/caddy
@@ -111,6 +117,9 @@ done
 
 for m in "${modules[@]}"; do
   echo "== $m"
+  if [[ -f $repo/stacks/$m/before-up.sh ]]; then
+    bash "$repo/stacks/$m/before-up.sh" "$stacks_dir/$m"
+  fi
   # From inside the directory: compose resolves COMPOSE_FILE in .env against the current one.
   (cd "$stacks_dir/$m" && docker compose up -d --pull "${PULL:-missing}" --remove-orphans)
   if [[ -f $repo/stacks/$m/after-up.sh ]]; then

@@ -3,6 +3,7 @@
 # Safe to re-run: every step checks what's already done, so it also resumes after an error.
 #   ./setup.sh           from your computer, over SSH (macOS or Linux)
 #   ./setup.sh --local   on the server itself
+# Another server: CONFIG=config.<name>.env ./setup.sh (one config file per server).
 set -euo pipefail
 repo="$(cd "$(dirname "$0")" && pwd)"
 cd "$repo"
@@ -56,12 +57,13 @@ detect() {
   printf 'D_WIFI=%q\n' "$([[ -d /sys/class/net/$dev/wireless ]] && echo "$dev")"
   printf 'D_IT87=%q\n' "$(grep -qs '^it8' /sys/class/hwmon/hwmon*/name && echo yes)"
   printf 'D_KEYS=%q\n' "$([[ -s ~/.ssh/authorized_keys ]] && echo yes)"
+  printf 'D_NVIDIA=%q\n' "$(grep -qs 0x10de /sys/bus/pci/devices/*/vendor && echo yes)"
 }
 
 # Settings from an earlier run are the defaults this time.
-if [[ -f config.env ]]; then
-  source config.env
-  say "Using your earlier answers (config.env) as defaults"
+if [[ -f $config_file ]]; then
+  source "$config_file"
+  say "Using your earlier answers ($config_file) as defaults"
 else
   say "Setting up a new server"
 fi
@@ -95,7 +97,7 @@ if [[ -n $local_mode ]]; then
 else
   eval "$(ssh "$SERVER_USER@$SERVER_HOST" bash -s <<<"$(declare -f detect); detect")"
 fi
-note "$D_OS, $D_ARCH, $D_RAM_MB MB RAM, LAN IP ${D_LAN_IP:-unknown}"
+note "$D_OS, $D_ARCH, $D_RAM_MB MB RAM, LAN IP ${D_LAN_IP:-unknown}${D_NVIDIA:+, NVIDIA GPU}"
 if [[ $D_UBUNTU != yes ]]; then
   note "This was written for Ubuntu Server; other systems will probably fail in bootstrap."
   confirm "   Continue anyway?" N || exit 1
@@ -126,7 +128,10 @@ fi
 # 3. Questions -----------------------------------------------------------------------------
 say "Your setup"
 ask NAME "Short name for the box (landing page at http://<name>.local)" "${NAME:-$D_HOSTNAME}"
-if [[ -z ${MODULES+set} ]]; then MODULES=$(echo $(optional_modules)); fi
+if [[ -z ${MODULES+set} ]]; then
+  MODULES=$(echo $(default_modules))
+  [[ -z $D_NVIDIA ]] || MODULES+=" ai"
+fi
 echo "Which services? (Caddy, firewall, Tailscale and backups are always on)"
 chosen=""
 for m in $(optional_modules); do
@@ -145,7 +150,17 @@ if [[ -n $D_WIFI || -n ${WIFI_WATCHDOG_IFACE:-} ]]; then
   ask WIFI_WATCHDOG_IFACE "Wi-Fi interface to watch and reconnect when stuck (empty: off; see extras/wifi-watchdog)" "${WIFI_WATCHDOG_IFACE-$D_WIFI}"
 fi
 
-# Everything else is detected or has a sensible default; config.env is yours to edit.
+if has_module ai; then
+  if (( ${D_RAM_MB:-0} < 30000 )); then
+    note "Strata (Qwen3.8-Flash-Next) needs 32 GB RAM or more; the 27B model runs on the GPU alone."
+  fi
+  ask AI_MODELS_DIR "Folder for the AI models (~100 GB and up)" "${AI_MODELS_DIR:-/srv/models}"
+  note "Partitions on the server (lsblk):"
+  on_server "lsblk -o NAME,SIZE,FSTYPE,MOUNTPOINTS" | sed 's/^/     /'
+  ask AI_MODELS_DEVICE "Partition to mount there, e.g. /dev/nvme0n1p1 (empty: leave as is; never formatted)" "${AI_MODELS_DEVICE:-}"
+fi
+
+# Everything else is detected or has a sensible default; the config file is yours to edit.
 LAN_IP=${LAN_IP:-$D_LAN_IP}
 TAILSCALE_IP=${TAILSCALE_IP:-}
 TRUSTED_NETS=${TRUSTED_NETS:-$(echo $D_NET4 $D_NET6 fe80::/10)}
@@ -158,6 +173,24 @@ DOMAIN=${DOMAIN:-home.arpa}
 BACKUP_TIME=${BACKUP_TIME:-04:00}
 IT87_FAN_MIN_PWM=${IT87_FAN_MIN_PWM:-}
 WIFI_WATCHDOG_IFACE=${WIFI_WATCHDOG_IFACE:-}
+MDNS_INTERFACES=${MDNS_INTERFACES:-}
+WAKE_ON_LAN_IFACE=${WAKE_ON_LAN_IFACE:-}
+WAKE_TARGETS=${WAKE_TARGETS:-}
+WAKE_ON_LAN_VIA=${WAKE_ON_LAN_VIA:-}
+if [[ -n $WAKE_ON_LAN_IFACE && -z ${WAKE_ON_LAN_MAC:-} ]]; then
+  WAKE_ON_LAN_MAC=$(on_server "cat /sys/class/net/$WAKE_ON_LAN_IFACE/address" 2>/dev/null || true)
+fi
+WAKE_ON_LAN_MAC=${WAKE_ON_LAN_MAC:-}
+AI_MODEL=${AI_MODEL:-qwen27b}
+AI_MODELS_DIR=${AI_MODELS_DIR:-/srv/models}
+AI_MODELS_DEVICE=${AI_MODELS_DEVICE:-}
+AI_CONTEXT=${AI_CONTEXT:-32768}
+AI_STRATA_CONTEXT=${AI_STRATA_CONTEXT:-131072}
+AI_QWEN27B_QUANT=${AI_QWEN27B_QUANT:-UD-Q3_K_XL}
+AI_STRATA_QUANT=${AI_STRATA_QUANT:-IQ3_S}
+AI_LEDS=${AI_LEDS:-}
+AI_LEDS_ON_MODE=${AI_LEDS_ON_MODE:-Rainbow wave}
+AI_LEDS_ON_SPEED=${AI_LEDS_ON_SPEED:-}
 
 # config.example.env with your values: same order, same comments.
 tmp=$(mktemp)
@@ -170,19 +203,21 @@ while IFS= read -r line; do
     printf '%s\n' "$line"
   fi
 done <config.example.env >"$tmp"
-mv "$tmp" config.env
+mv "$tmp" "$config_file"
 
-say "config.env"
-grep -E '^[A-Z]' config.env | sed 's/^/   /'
+say "$config_file"
+grep -E '^[A-Z]' "$config_file" | sed 's/^/   /'
 if confirm "Edit it before going on?" N; then
-  "${EDITOR:-vi}" config.env </dev/tty >/dev/tty
+  "${EDITOR:-vi}" "$config_file" </dev/tty >/dev/tty
 fi
 load_config
 
 # 4. Copy the repo -------------------------------------------------------------------------
 if [[ -z $local_mode ]]; then
   say "Copying the repo to ~/homelab-agent on the server"
-  rsync -a --delete --exclude .git --exclude mac ./ "$SERVER_USER@$SERVER_HOST:homelab-agent/"
+  rsync -a --delete --exclude .git --exclude mac --include config.example.env --exclude 'config*.env' \
+    ./ "$SERVER_USER@$SERVER_HOST:homelab-agent/"
+  rsync -a "$config_file" "$SERVER_USER@$SERVER_HOST:homelab-agent/config.env"
 fi
 
 # 5. Bootstrap (root) ----------------------------------------------------------------------
@@ -235,6 +270,12 @@ for m in n8n uptime-kuma beszel; do
   if has_module "$m"; then note "Open $(module_var "$m" TITLE) and create its owner account."; fi
 done
 if has_module beszel; then note "In Beszel, add the system with host 127.0.0.1, port 45876."; fi
+if has_module ai; then
+  note "If bootstrap installed the NVIDIA driver: sudo reboot the server once."
+  note "Local AI: the first start downloads the model (watch: ssh $SERVER_USER@$SERVER_HOST docker logs -f ai-$AI_MODEL)."
+  note "  Switch models and open SwarmUI on the Local AI page; sign in with the API key:"
+  note "  ssh $SERVER_USER@$SERVER_HOST cat /opt/stacks/ai/data/.env"
+fi
 if has_module pihole; then
   note "Tailscale admin console > DNS > add nameserver $(on_server 'tailscale ip -4' 2>/dev/null || echo '<the server'"'"'s Tailscale IP>'),"
   note "so your devices resolve *.$DOMAIN and get ad blocking."
@@ -242,4 +283,5 @@ fi
 note "Save the backup password in your password manager:"
 note "  ssh $SERVER_USER@$SERVER_HOST cat .config/restic/password"
 echo
-echo "Run ./setup.sh again after changing services; ./deploy.sh --update once a month."
+prefix=${CONFIG:+CONFIG=$CONFIG }
+echo "Run ${prefix}./setup.sh again after changing services; ${prefix}./deploy.sh --update once a month."

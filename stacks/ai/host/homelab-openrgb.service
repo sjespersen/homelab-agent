@@ -1,0 +1,13 @@
+[Unit]
+Description=OpenRGB server for the LED switch (scans the hardware once, then takes commands)
+After=systemd-udev-settle.service
+
+[Service]
+Environment=QT_QPA_PLATFORM=offscreen
+# Only this box can send it commands. Root: the RGB controllers' devices belong to root.
+ExecStart=/usr/bin/openrgb --server --server-host 127.0.0.1 --server-port 6742 --noautoconnect
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

@@ -16,6 +16,7 @@ Every service except Caddy is optional (see [Modules](#modules)):
 | [Pi-hole](https://pi-hole.net) | `pihole.home.arpa` | DNS with ad and tracker blocking; also serves the `*.home.arpa` names |
 | [Uptime Kuma](https://github.com/louislam/uptime-kuma) | `status.home.arpa` | Uptime checks and alerts |
 | [Beszel](https://beszel.dev) | `server.home.arpa` | CPU, RAM, disk, temperatures, fans, per-container stats |
+| Local AI ([llama.cpp](https://github.com/ggml-org/llama.cpp), [Strata](https://github.com/Niko1221/Strata), [SwarmUI](https://github.com/mcmonkeyprojects/SwarmUI)) | `ai.home.arpa`, `<server>:8005`; `swarm.home.arpa`, `<server>:8006` | Qwen3.8-27B, Qwen3.8-Flash-Next or image generation on an NVIDIA GPU, a page to switch, OpenAI-compatible API. Opt-in |
 | [Caddy](https://caddyserver.com) | port 80 | Gives every service a name; landing page at `http://<name>.local` |
 | [Tailscale](https://tailscale.com) | — | Reach everything from anywhere, no open ports |
 | [restic](https://restic.net) | — | Nightly encrypted backups, pulled to your Mac |
@@ -74,24 +75,28 @@ Pick the services in `config.env`:
 ```sh
 MODULES="pihole hermes n8n uptime-kuma beszel"   # the default: everything
 MODULES="hermes"                                 # just the agent
+MODULES="ai"                                     # a GPU box serving local models
 ```
+
+`ai` needs an NVIDIA GPU, so it's only in `MODULES` if you put it there (`setup.sh` suggests
+it when it finds one). See [`stacks/ai/README.md`](stacks/ai/README.md).
 
 Caddy, the firewall, Tailscale and backups are always on. Turning a module off stops its
 containers and closes its ports; its data stays in `/opt/stacks/<module>` (and in the backups).
 
 Without Pi-hole nobody hands out the `*.home.arpa` names, so Caddy serves each service on its
-own port instead: Hermes `:8001`, n8n `:8002`, Uptime Kuma `:8003`, Beszel `:8004`, all linked
-from `http://<name>.local`.
+own port instead: Hermes `:8001`, n8n `:8002`, Uptime Kuma `:8003`, Beszel `:8004`, Local AI
+`:8005`, SwarmUI `:8006`, all linked from `http://<name>.local`.
 
 A module is a folder in `stacks/`:
 
 | File | What it's for |
 |---|---|
 | `compose.yaml` | The containers. Reads `${TZ}`, `${DOMAIN}`, `${PUID}`, `${SITE_URL}` and friends |
-| `module.env` | Title, start order, name/port behind Caddy, firewall ports, containers to stop for backups |
-| `site.caddy` | What Caddy does for its name or port (usually one `reverse_proxy` line) |
+| `module.env` | Title, start order, name/port behind Caddy (more with `SITES`), firewall ports, containers to stop for backups, settings passed to compose (`ENV`) |
+| `site.caddy`, `site.<site>.caddy` | What Caddy does for its name or port (usually one `reverse_proxy` line) |
 | `compose.with-<module>.yaml` | Added only when that other module is on (n8n joins Hermes' network) |
-| `backup-excludes.txt`, `after-up.sh`, `root-setup.sh` | Optional: caches to skip, a step after start, host setup as root |
+| `backup-excludes.txt`, `before-up.sh`, `after-up.sh`, `root-setup.sh` | Optional: caches to skip, a step before or after start, host setup as root |
 
 To add your own service, copy a module like `uptime-kuma`, give it a free `PORT`, and run
 `./setup.sh`.
@@ -102,6 +107,21 @@ Edit a compose file in `stacks/`, then `./deploy.sh`. To add or remove services,
 `./setup.sh` again (it also updates the firewall, which needs sudo).
 
 See what's running, where, and when the last backup ran: `./deploy.sh --status`.
+
+### More than one server
+
+Give each server its own config file in the repo (`config.<name>.env`, gitignored like
+`config.env`) and put `CONFIG=` in front of the commands:
+
+```sh
+CONFIG=config.ai.env ./setup.sh        # first time: writes config.ai.env
+CONFIG=config.ai.env ./deploy.sh
+CONFIG=config.ai.env ./deploy.sh --update
+```
+
+Each server gets only its own file (as `config.env` in `~/homelab-agent`), and
+`update-images.sh` only moves the pins of the modules that server runs. Without `CONFIG` the
+commands use `config.env`, as before.
 
 ### Versions and updates
 
@@ -117,8 +137,10 @@ newest build of its tag (`update-images.sh`), shows what changed and deploys. If
 works, commit the compose files; if not, `git checkout -- stacks && ./deploy.sh` goes back to
 the old images, and restic has the data from before the update.
 
-Not pinned: Ubuntu's packages (Docker, restic; they get Ubuntu's security updates), Tailscale,
-and the tools Hermes installs into its data folder at runtime (those are in the backups).
+Not pinned: Ubuntu's packages (Docker, restic, the NVIDIA driver; they get Ubuntu's security
+updates), Tailscale, the NVIDIA Container Toolkit, and the tools Hermes installs into its data
+folder at runtime (those are in the backups). Strata has no published image: the server builds
+it from the release tag in `stacks/ai/compose.yaml`, so updating it means changing that tag.
 
 ## Security
 
@@ -141,6 +163,9 @@ agent) gets a lot. Read this before you put anything valuable on the box.
   They can't reach the other services' ports or Caddy (ufw drops traffic from Docker networks).
 - The Beszel agent talks to Docker through a read-only proxy, not the Docker socket.
 - n8n's Execute Command and Local File Trigger nodes are off.
+- The local AI API, switcher page and SwarmUI (ports 8005 and 8006, via Caddy) need the AI API
+  key; the engines themselves listen on `127.0.0.1` only. The switcher reaches Docker through a
+  proxy that only lists, starts and stops containers, on an internal network nothing else is on.
 - Hermes pushes to GitHub with per-repo deploy keys, not your account.
 - The Mac's backup key can only read the backup folder (`rrsync -ro`).
 - Backups are encrypted with restic.
@@ -171,6 +196,9 @@ webhooks.
   container's environment variables and logs to anything on the host network (port 2375 on
   `127.0.0.1`), so keep secrets out of compose `environment:` (Hermes and n8n keep theirs in
   `data/`).
+- The AI switcher's proxy (ai module) mounts the Docker socket too. It allows listing,
+  inspecting, starting and stopping containers: a compromised switcher can stop any container
+  on the box and read their environment variables, but can't create one or run commands.
 *Reduce it:* protect your SSH key with a passphrase; remove the `socket-proxy` service and
 `DOCKER_HOST` from `stacks/beszel/compose.yaml` if you don't need per-container stats.
 
@@ -197,9 +225,14 @@ old devices.
 **7. Images only update when you update them.** Every image is pinned by digest, so nothing
 changes behind your back, but known holes also stay until you run `./deploy.sh --update`.
 Ubuntu installs its own security updates (unattended-upgrades); containers don't. And when you
-do update, you trust whatever the maintainers published since.
-*Reduce it:* update monthly; read the release notes for Hermes and n8n before committing the
-new pins.
+do update, you trust whatever the maintainers published since. Strata (ai module) is a young,
+single-maintainer project built from a git tag on the box and run as root in its container
+with page-locked memory: a tag that gets moved, or a bad release, runs on your GPU box.
+SwarmUI is built the same way, and installs ComfyUI and Python packages at runtime, unpinned;
+every ComfyUI custom node or SwarmUI extension you add runs code with access to its container
+(your images and the models disk).
+*Reduce it:* update monthly; read the release notes for Hermes, n8n, Strata and SwarmUI before
+committing new pins or tags; install only custom nodes and extensions from well-known authors.
 
 **8. Secrets at rest.** Ubuntu's default install has no disk encryption, so whoever takes the
 box gets every key and session on it. Secrets also sit in plain files under `/opt/stacks`
@@ -211,6 +244,27 @@ every boot); keep the box somewhere it won't walk off.
 
 - Hermes' API on port 8642 gives full agent access to anyone with the key on `TRUSTED_NETS` or
   the tailnet. Treat that key like a password.
+- The local AI key (`/opt/stacks/ai/data/.env`) travels in plain HTTP on the LAN like the logins
+  in 5. Whoever has it can use the chat models, switch services, and use SwarmUI, including
+  installing extensions there (see 7). It also signs the login cookie: change the key to sign
+  everyone out.
+- Model files from Hugging Face or Civitai can carry code: prefer `.safetensors` and `.gguf`
+  over `.ckpt`/`.pt` files.
+- The local AI key can also suspend, restart or shut down the box (the switcher's Power card).
+  A root service runs those three actions and nothing else.
+- With `WAKE_TARGETS` set, Hermes can wake those devices (and only those: the MACs come from
+  the config). A prompt injection could wake them too; it can't do more than that through this.
+- With `WAKE_ON_LAN_IFACE` set, anything on the LAN can wake the box with a magic packet. That's
+  harmless by itself, but a box woken that way is up with all its services.
+- The LED switch (ai module, `AI_LEDS=yes`) runs a root service whenever
+  `/opt/stacks/ai/data/switcher/leds` changes, a file your user and the switcher can write. The
+  service accepts only on/off, an effect the device itself lists (letters, digits, spaces), a
+  speed of 0–100 and a 6-digit color from it, and passes them to OpenRGB as plain arguments.
+  OpenRGB itself runs as a root server on 127.0.0.1:6742 without a password: any program on the
+  box (including the host-network containers: Caddy, Uptime Kuma, Beszel) can use its whole SDK,
+  which changes the lighting and saves or loads OpenRGB profiles in root's OpenRGB folder.
+- With the ai module, `bootstrap.sh` adds NVIDIA's apt repository (signed with NVIDIA's key)
+  for the Container Toolkit.
 - n8n webhooks are open by design to anyone who can reach n8n. Add authentication in the
   webhook node.
 - Tailscale is installed with `curl | sh`, and `bootstrap.sh` runs as root: read scripts before
@@ -279,18 +333,28 @@ on the host). Give each repo its own deploy key, so Hermes can only push to that
 
 Revoke access any time by deleting the deploy key on GitHub.
 
+## Let Hermes wake other computers
+
+Set `WAKE_TARGETS="gpubox=aa:bb:cc:dd:ee:ff"` (name=MAC, space-separated) and run `./deploy.sh`.
+Hermes gets a `wake-device` skill: it writes a name to `/opt/data/wake/request`, and a small
+user service on the host (`hermes-wake.path`, no root) sends the Wake-on-LAN packet, since
+broadcasts from Hermes' container don't leave its Docker network. Ask it on Telegram or WhatsApp
+to "wake the gpubox". The other computer has to allow Wake-on-LAN (see `extras/wake-on-lan`).
+
 ## Extras
 
 - `extras/it87-fan/`: makes the fan quieter on boards whose BIOS sets a loud minimum fan speed
   (many ITE IT87xx Super I/O chips). See its README.
 - `extras/wifi-watchdog/`: reconnects Wi-Fi when it stays connected but stops passing traffic.
   See its README.
+- `extras/wake-on-lan/`: wakes the box over the network from suspend or off (`WAKE_ON_LAN_*`).
+  See its README.
 
 ## Not covered
 
 Wi-Fi/ethernet config (netplan), hostname, and router settings: they depend on your hardware
-and network. Local models: an 8 GB box without a GPU can't run useful ones; point Hermes at a
-cloud provider or at a bigger machine on your tailnet.
+and network. Local models need a GPU box (the `ai` module); an 8 GB box without one can't run
+useful ones, so point its Hermes at a cloud provider or at the GPU box on your tailnet.
 
 ## License
 

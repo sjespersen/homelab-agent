@@ -11,14 +11,16 @@ fi
 
 printf '\nLanding page: http://%s.local  (or http://%s)\n\n' "$NAME" "$LAN_IP"
 for m in $(enabled_modules); do
-  host=$(module_var "$m" HOST)
-  link=$(module_var "$m" LINK)
-  if [[ -n $link ]]; then url=http://$NAME.local$link
-  elif [[ -z $host ]]; then url=""
-  elif has_module pihole; then url=http://$host.$DOMAIN
-  else url=http://$NAME.local:$(module_var "$m" PORT)
-  fi
-  printf '%-12s %s\n' "$m" "$url"
+  urls=""
+  while read -r site host port _; do
+    [[ $port != - ]] || port=""
+    link=$(module_site_var "$m" "$site" LINK)
+    if [[ -n $link ]]; then urls+=" http://$NAME.local$link"
+    elif has_module pihole; then urls+=" http://$host.$DOMAIN"
+    else urls+=" http://$NAME.local:$port"
+    fi
+  done < <(module_sites "$m")
+  printf '%-12s%s\n' "$m" "$urls"
   if [[ -f /opt/stacks/$m/compose.yaml ]]; then
     (cd "/opt/stacks/$m" && docker compose ps -a --format '{{.Name}}: {{.Status}}') | sed 's/^/  /'
   else

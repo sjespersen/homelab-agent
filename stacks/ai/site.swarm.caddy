@@ -1,0 +1,13 @@
+# SwarmUI has no login of its own: the switcher's login (the AI API key) guards it.
+handle /_ai/* {
+	reverse_proxy 127.0.0.1:8079
+}
+handle {
+	forward_auth 127.0.0.1:8079 {
+		uri /_ai/auth
+	}
+	reverse_proxy 127.0.0.1:7801
+}
+handle_errors 502 {
+	respond "SwarmUI isn't running. Switch to it on the Local AI page (one port down)." 502
+}

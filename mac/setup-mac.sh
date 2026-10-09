@@ -2,7 +2,7 @@
 # One-time Mac setup for backup pulls (needs Homebrew). Safe to re-run.
 set -euo pipefail
 cd "$(dirname "$0")"
-source ../config.env
+source "../${CONFIG:-config.env}"
 host="$SERVER_USER@$SERVER_HOST"
 key="$HOME/.ssh/${NAME}_backup_pull"
 label="home.$NAME.backup-pull"

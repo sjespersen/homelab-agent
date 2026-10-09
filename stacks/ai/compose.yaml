@@ -1,0 +1,227 @@
+# Local AI: three services that take turns on the GPU (only one runs; each wants all of it):
+#   qwen27b  Qwen3.8-27B on llama.cpp            OpenAI-compatible API on 127.0.0.1:8080
+#   strata   Qwen3.8-Flash-Next on Strata        same API on the same port
+#   swarmui  SwarmUI with ComfyUI, image models  web UI on 127.0.0.1:7801
+# The switcher (Caddy: port 8005, with the API under /v1) shows them and switches between them;
+# ./ai-model.sh does the same from your computer. Compose profiles keep the others from
+# starting on a deploy; before-up.sh creates all three so the switcher can start them.
+# The API key is in ./data/.env (before-up.sh creates it). Models, ComfyUI and its extensions
+# live in AI_MODELS_DIR, not in /opt/stacks, so they stay out of the backups.
+# GPU access goes through CDI (nvidia.com/gpu=all), not the NVIDIA runtime hook: with the hook,
+# running containers lose the GPU ("Failed to initialize NVML: Unknown Error") whenever systemd
+# reloads (apt upgrades, bootstrap.sh). The NVIDIA Container Toolkit keeps the CDI spec current.
+services:
+  qwen27b:
+    profiles: [qwen27b]
+    # The CUDA 12.8 build: the cuda13 one needs a newer driver than Ubuntu's recommended one.
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda@sha256:ccfd96bb2aba4ef77e3df656d713ce85bf3c6a886d7974243127c5ad66ca6d2a  # b11515
+    container_name: ai-qwen27b
+    labels:
+      homelab.ai.title: Qwen3.8-27B
+      homelab.ai.about: "Chat, dense 27B on llama.cpp; fast, all on the GPU"
+      homelab.ai.kind: chat
+      homelab.ai.order: "1"
+    user: "${PUID}:${PGID}"
+    ports:
+      - "127.0.0.1:8080:8080"
+    env_file:
+      - path: ./data/.env   # LLAMA_API_KEY; before-up.sh creates it
+        required: false
+    environment:
+      LLAMA_CACHE: /models   # -hf downloads land here
+      HOME: /models
+    # First start downloads the GGUF from Hugging Face (13 GB for UD-Q3_K_XL). UD-Q3_K_XL plus
+    # a 32k q8_0 KV cache fits 16 GB of VRAM; UD-IQ4_XS (14 GB) needs AI_CONTEXT=16384 or less.
+    command:
+      - -hf
+      - unsloth/Qwen3.8-27B-GGUF:${AI_QWEN27B_QUANT}
+      - --no-mmproj
+      - --alias
+      - qwen3.8-27b
+      - --jinja
+      - --ctx-size
+      - "${AI_CONTEXT}"
+      - --n-gpu-layers
+      - "99"
+      - --flash-attn
+      - "on"
+      - --cache-type-k
+      - q8_0
+      - --cache-type-v
+      - q8_0
+    volumes:
+      - ${AI_MODELS_DIR}/llama.cpp:/models
+    # The port opens only once the model is downloaded and loaded: without a long start period
+    # the image's own check calls a first start unhealthy.
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 30m
+      retries: 3
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: cdi   # see the note at the top: survives systemd reloads
+              device_ids: [nvidia.com/gpu=all]
+              capabilities: [gpu]
+    restart: unless-stopped
+
+  strata:
+    profiles: [strata]
+    # Strata ships no image: the box builds it from the release tag (the first build compiles
+    # the engine, ~15-30 min). To update, change the tag in both places and ./deploy.sh.
+    build:
+      context: https://github.com/Niko1221/Strata.git#v0.1.41   # fb58e0d
+      args:
+        CUDA_ARCHITECTURES: "120"   # RTX 50 only, for a faster build; RTX 40: 89, RTX 30: 86
+        BUILD_VISION: "0"
+    image: local/strata:v0.1.41
+    container_name: ai-strata
+    labels:
+      homelab.ai.title: Qwen3.8-Flash-Next
+      homelab.ai.about: "Chat, 125B MoE on Strata; smarter, uses ~50 GB RAM"
+      homelab.ai.kind: chat
+      homelab.ai.order: "2"
+    ports:
+      - "127.0.0.1:8080:8080"
+    env_file:
+      - path: ./data/.env   # API_KEY; before-up.sh creates it
+        required: false
+    environment:
+      MODEL: ${AI_STRATA_QUANT}
+      # Strata keeps a long context's KV cache in RAM (~1.7 GB at 128K), so it can go far higher
+      # than llama.cpp. Setup bakes it into its config: before-up.sh sets REINSTALL=1 for one
+      # start when AI_STRATA_CONTEXT differs from it (no download, ~2 min).
+      CONTEXT: ${AI_STRATA_CONTEXT}
+      REINSTALL: ${STRATA_REINSTALL:-0}
+      VISION: "no"
+      GPU: "0"
+    # First start downloads the model (~70 GB) and prepares it; later starts take 1-3 minutes.
+    # Strata keeps 32-62 GB of it in RAM and page-locks part of that for the GPU.
+    volumes:
+      - ${AI_MODELS_DIR}/strata:/data
+    ulimits:
+      memlock: -1
+    # The engine releases its page-locked RAM on SIGTERM, which takes longer than Docker's 10 s.
+    stop_grace_period: 60s
+    # The image's own check gives a start 10 minutes; a first start downloads ~70 GB.
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://127.0.0.1:8080/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 60m
+      retries: 3
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: cdi   # see the note at the top: survives systemd reloads
+              device_ids: [nvidia.com/gpu=all]
+              capabilities: [gpu]
+    restart: unless-stopped
+
+  swarmui:
+    profiles: [swarmui]
+    # No published image either: built on the box from the release tag. The first start
+    # compiles SwarmUI, and its install page sets up ComfyUI (~10 GB, several minutes).
+    build:
+      context: https://github.com/mcmonkeyprojects/SwarmUI.git#0.9.8-Beta   # ec823c3
+      dockerfile: launchtools/StandardDockerfile.docker
+      args:
+        UID: "${PUID}"
+        # Keep .git in the build: SwarmUI updates itself with git and refuses to install without it.
+        BUILDKIT_CONTEXT_KEEP_GIT_DIR: "1"
+    image: local/swarmui:0.9.8-beta
+    container_name: ai-swarmui
+    labels:
+      homelab.ai.title: SwarmUI
+      homelab.ai.about: "Images: SDXL, Flux and more, on ComfyUI; pick models and LoRAs in its UI"
+      homelab.ai.kind: image
+      homelab.ai.order: "3"
+    user: "${PUID}:${PGID}"
+    cap_drop: [ALL]
+    command: ["--forward_restart"]   # exit code 42 (restart from the UI) ends the container; Docker restarts it
+    ports:
+      - "127.0.0.1:7801:7801"
+    volumes:
+      # Settings, workflows and your images: in /opt/stacks, so they're backed up.
+      - ./data/swarm/Data:/SwarmUI/Data
+      - ./data/swarm/Output:/SwarmUI/Output
+      - ./data/swarm/CustomWorkflows:/SwarmUI/src/BuiltinExtensions/ComfyUIBackend/CustomWorkflows
+      # Models, ComfyUI and extensions: big and downloadable again, on the models disk.
+      - ${AI_MODELS_DIR}/swarm/Models:/SwarmUI/Models
+      - ${AI_MODELS_DIR}/swarm/dlbackend:/SwarmUI/dlbackend
+      - ${AI_MODELS_DIR}/swarm/DLNodes:/SwarmUI/src/BuiltinExtensions/ComfyUIBackend/DLNodes
+      - ${AI_MODELS_DIR}/swarm/Extensions:/SwarmUI/src/Extensions
+    shm_size: "4gb"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:7801/"]   # not --spider: HEAD gets 405
+      interval: 30s
+      timeout: 5s
+      start_period: 30m
+      retries: 3
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: cdi   # see the note at the top: survives systemd reloads
+              device_ids: [nvidia.com/gpu=all]
+              capabilities: [gpu]
+    restart: unless-stopped
+
+  # The page at port 8005: which service runs, GPU memory, buttons to switch. Login: the API key.
+  switcher:
+    image: python:3.13-slim@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f  # 3.13.16
+    container_name: ai-switcher
+    user: "${PUID}:${PGID}"
+    command: ["python", "/app/app.py"]
+    env_file:
+      - path: ./data/.env   # API_KEY
+        required: false
+    environment:
+      DOCKER_PROXY: ai-socket-proxy:2375
+      STATE_FILE: /state/active
+      LEDS: "${AI_LEDS}"   # yes: show the LED switch
+      LEDS_EFFECT: "${AI_LEDS_ON_MODE}"   # defaults until changed on the page
+      LEDS_SPEED: "${AI_LEDS_ON_SPEED}"
+    ports:
+      - "127.0.0.1:8079:8079"
+    volumes:
+      - ./switcher:/app:ro
+      - ./data/switcher:/state
+    networks: [default, docker-api]
+    read_only: true
+    cap_drop: [ALL]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: cdi   # for nvidia-smi (the memory gauge); the switcher runs no CUDA
+              device_ids: [nvidia.com/gpu=all]
+              capabilities: [gpu]
+    restart: unless-stopped
+
+  # The switcher's only way to Docker: list and inspect containers, start and stop them.
+  # Nothing that creates containers, runs commands in them or reads their files.
+  socket-proxy:
+    image: lscr.io/linuxserver/socket-proxy:latest@sha256:0357c479cc98e863917d1cd8b10e83d35a50ca46a0788f5a192bf792c3b7100d  # 3.4.6-r0-ls100
+    container_name: ai-socket-proxy
+    environment:
+      CONTAINERS: "1"
+      ALLOW_START: "1"
+      ALLOW_STOP: "1"
+      POST: "0"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [docker-api]
+    read_only: true
+    tmpfs:
+      - /run
+    restart: unless-stopped
+
+networks:
+  # No way out and nothing published: only the switcher reaches the proxy.
+  docker-api:
+    internal: true

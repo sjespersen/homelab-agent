@@ -1,0 +1,6 @@
+[Unit]
+Description=Wake a device by Wake-on-LAN when Hermes asks
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/hermes-wake.sh @STACK@ "@TARGETS@"

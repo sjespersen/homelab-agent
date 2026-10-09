@@ -1,0 +1,15 @@
+[Unit]
+Description=Wake-on-LAN (magic packet) on @IFACE@, from suspend and from off
+BindsTo=sys-subsystem-net-devices-@IFACE@.device
+After=sys-subsystem-net-devices-@IFACE@.device
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/sbin/ethtool -s @IFACE@ wol g
+# Lets the network card wake the box from suspend: the card and every PCIe bridge between it
+# and the CPU must allow wakeup (on X570 boards the chipset bridges come with it off).
+ExecStart=/bin/sh -c 'p=$$(readlink -f /sys/class/net/@IFACE@/device); while [ "$$p" != /sys/devices ]; do [ -w "$$p/power/wakeup" ] && echo enabled >"$$p/power/wakeup"; p=$$(dirname "$$p"); done'
+
+[Install]
+WantedBy=multi-user.target

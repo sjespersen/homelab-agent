@@ -1,0 +1,7 @@
+# The chat models' API; everything else is the switcher page.
+handle /v1/* {
+	reverse_proxy 127.0.0.1:8080
+}
+handle {
+	reverse_proxy 127.0.0.1:8079
+}

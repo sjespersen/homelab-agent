@@ -1,0 +1,8 @@
+[Unit]
+Description=Watch for Hermes' wake requests
+
+[Path]
+PathChanged=@STACK@/data/wake/request
+
+[Install]
+WantedBy=default.target

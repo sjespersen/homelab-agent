@@ -2,8 +2,10 @@
 	auto_https off
 }
 
-# Landing page, reachable without Pi-hole DNS.
-http://{$NAME}.local, http://{$NAME}.{$DOMAIN}, http://{$LAN_IP} {
+# Landing page on port 80 for any name the server is reached by (<name>.local, the LAN or
+# Tailscale IP, the Tailscale name), so it needs no Pi-hole DNS. Sites with their own name
+# (pihole.<DOMAIN> ...) match first.
+:80 {
 	# Extras from the modules (Pi-hole's admin); install.sh writes this file.
 	import landing.caddy
 	root * /srv

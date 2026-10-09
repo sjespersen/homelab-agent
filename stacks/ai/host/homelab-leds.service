@@ -1,0 +1,11 @@
+[Unit]
+Description=Case LEDs on or off, as set on the Local AI page
+After=systemd-udev-settle.service homelab-openrgb.service
+Wants=homelab-openrgb.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/homelab-leds.sh @DIR@ "@ON_MODE@" "@ON_SPEED@"
+
+[Install]
+WantedBy=multi-user.target

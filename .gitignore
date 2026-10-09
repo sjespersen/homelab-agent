@@ -1,6 +1,9 @@
 # Your own settings.
 config.env
+config.*.env
+!config.example.env
 # Runtime data and secrets live on the server and in the restic backup, never in git.
 data/
 etc-pihole/
 .env
+__pycache__/

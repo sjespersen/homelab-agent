@@ -1,0 +1,8 @@
+[Unit]
+Description=Run the power action asked for on the Local AI page
+
+[Path]
+PathChanged=@DIR@/power
+
+[Install]
+WantedBy=multi-user.target

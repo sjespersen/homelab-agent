@@ -1,0 +1,6 @@
+[Unit]
+Description=Suspend, restart or shut down, as asked on the Local AI page
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/homelab-power.sh @DIR@

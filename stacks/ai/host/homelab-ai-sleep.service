@@ -1,0 +1,16 @@
+[Unit]
+Description=Stop the GPU service before suspend, start it again after waking
+# Before NVIDIA's suspend step, which would otherwise save the loaded model's GPU memory.
+Before=sleep.target nvidia-suspend.service nvidia-hibernate.service
+StopWhenUnneeded=yes
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/homelab-ai-sleep.sh pre
+ExecStop=/usr/local/sbin/homelab-ai-sleep.sh post
+# Strata needs up to a minute to release its locked RAM.
+TimeoutStartSec=120
+
+[Install]
+WantedBy=sleep.target
