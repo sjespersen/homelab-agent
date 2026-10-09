@@ -27,6 +27,20 @@ else
 fi
 systemctl restart avahi-daemon
 
+log "Boot: wait for any network port, not all"
+# netplan makes the boot wait until every configured port has a link, up to 2 minutes: with
+# Ethernet and Wi-Fi configured and the cable unplugged, Docker and everything else start only
+# then. One port online (with a route and DNS, as netplan's own second check asks) is enough,
+# and never more than 30 seconds. Named to sort after netplan's 10-netplan.conf, which it
+# replaces.
+mkdir -p /etc/systemd/system/systemd-networkd-wait-online.service.d
+cat >/etc/systemd/system/systemd-networkd-wait-online.service.d/99-homelab-any.conf <<'EOF'
+[Service]
+ExecStart=
+ExecStart=/usr/lib/systemd/systemd-networkd-wait-online --any --dns -o routable --timeout=30
+EOF
+systemctl daemon-reload
+
 log "SSH: keys only, no root login"
 if [[ ! -s /home/$SERVER_USER/.ssh/authorized_keys ]]; then
   echo "No SSH key for $SERVER_USER yet; run ssh-copy-id first, or you'd be locked out." >&2
