@@ -139,8 +139,8 @@ the old images, and restic has the data from before the update.
 
 Not pinned: Ubuntu's packages (Docker, restic, the NVIDIA driver; they get Ubuntu's security
 updates), Tailscale, the NVIDIA Container Toolkit, and the tools Hermes installs into its data
-folder at runtime (those are in the backups). Strata has no published image: the server builds
-it from the release tag in `stacks/ai/compose.yaml`, so updating it means changing that tag.
+folder at runtime (those are in the backups). Strata and SwarmUI have no published images: the server builds
+them from the release tag or commit in `stacks/ai/compose.yaml`, so updating them means changing that.
 
 ## Security
 

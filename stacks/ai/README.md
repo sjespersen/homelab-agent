@@ -6,7 +6,7 @@ Three services that take turns on the GPU, and a page to switch between them:
 |---|---|---|---|
 | `qwen27b` | Chat: Qwen3.8-27B (dense) | [llama.cpp](https://github.com/ggml-org/llama.cpp) server, pinned image | 16 GB VRAM, 13 GB disk |
 | `strata` | Chat: Qwen3.8-Flash-Next (125B MoE, 6B active) | [Strata](https://github.com/Niko1221/Strata), built on the box from a release tag | 12 GB+ VRAM, 32 GB+ RAM (64 GB for every quant), ~75 GB NVMe |
-| `swarmui` | Images: SDXL, Flux, SD 3.5 … | [SwarmUI](https://github.com/mcmonkeyprojects/SwarmUI) with ComfyUI inside, built from a release tag | 8 GB+ VRAM, ~10 GB for ComfyUI plus your models |
+| `swarmui` | Images: Krea 2, SDXL, Flux, SD 3.5 … | [SwarmUI](https://github.com/mcmonkeyprojects/SwarmUI) with ComfyUI inside, built from a pinned commit | 8 GB+ VRAM, ~10 GB for ComfyUI plus your models |
 
 Only one runs at a time: each wants the whole GPU. "Stop" leaves the GPU empty; the page can
 also suspend, restart or shut down the box.
@@ -86,6 +86,16 @@ Only LEDs OpenRGB can reach switch: the board's own and whatever is plugged into
 headers, plus supported USB devices (e.g. an AMD Wraith Prism cooler on an internal USB header).
 Fans on a case hub or the case's LED button, and power supplies with their own controller, don't.
 List what it finds: `sudo QT_QPA_PLATFORM=offscreen openrgb --list-devices`.
+
+## Image models
+
+Add models in SwarmUI's **Models → Download** tab (paste a model's download link), or save
+them under `AI_MODELS_DIR/swarm/Models/` (`diffusion_models/` for Krea 2 and Flux-style
+models). SwarmUI fetches text encoders and VAEs itself on first use.
+
+- **Krea 2 Turbo** (fp8, 13 GB, [Comfy-Org/Krea-2](https://huggingface.co/Comfy-Org/Krea-2)) runs
+  on a 16 GB card: 8 steps, CFG 1, about 14 s per 1024x1024 image on an RTX 50 card with 16 GB.
+  It needs SwarmUI newer than 0.9.8-Beta (the pinned commit has it).
 
 ## Use the chat models
 

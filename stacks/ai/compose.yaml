@@ -124,16 +124,17 @@ services:
 
   swarmui:
     profiles: [swarmui]
-    # No published image either: built on the box from the release tag. The first start
-    # compiles SwarmUI, and its install page sets up ComfyUI (~10 GB, several minutes).
+    # No published image either: built on the box from a pinned commit of master (SwarmUI's last
+    # release, 0.9.8-Beta from Feb 2026, predates Krea 2). The first start compiles SwarmUI, and
+    # its install page sets up ComfyUI (~10 GB, several minutes).
     build:
-      context: https://github.com/mcmonkeyprojects/SwarmUI.git#0.9.8-Beta   # ec823c3
+      context: https://github.com/mcmonkeyprojects/SwarmUI.git#d9ecb52dfd4e147c4f2dc90440331e8dea4036a7   # 2026-10-01
       dockerfile: launchtools/StandardDockerfile.docker
       args:
         UID: "${PUID}"
         # Keep .git in the build: SwarmUI updates itself with git and refuses to install without it.
         BUILDKIT_CONTEXT_KEEP_GIT_DIR: "1"
-    image: local/swarmui:0.9.8-beta
+    image: local/swarmui:d9ecb52
     container_name: ai-swarmui
     labels:
       homelab.ai.title: SwarmUI
