@@ -31,7 +31,12 @@ services:
       LLAMA_CACHE: /models   # -hf downloads land here
       HOME: /models
     # First start downloads the GGUF from Hugging Face (13 GB for UD-Q3_K_XL). UD-Q3_K_XL plus
-    # a 32k q8_0 KV cache fits 16 GB of VRAM; UD-IQ4_XS (14 GB) needs AI_CONTEXT=16384 or less.
+    # a 32k q8_0 KV cache and MTP fits 16 GB of VRAM (14.4 GB); UD-IQ4_XS (14 GB) needs
+    # AI_CONTEXT=16384 or less. Keep the KV cache at 8 bits: 4-bit makes Qwen 3.8 loop.
+    # MTP (the draft head inside the GGUF) nearly doubles the output speed (RTX 5060 Ti:
+    # 28 -> 52 tok/s, 91-96% of drafts accepted); it works best with one request at a time.
+    # Qwen 3.8 thinks at "xhigh" unless asked otherwise, and clients like Hermes don't ask:
+    # on a coding task that was >146 s without an answer, against 96 s for "medium" (~70 s "low").
     command:
       - -hf
       - unsloth/Qwen3.8-27B-GGUF:${AI_QWEN27B_QUANT}
@@ -49,6 +54,16 @@ services:
       - q8_0
       - --cache-type-v
       - q8_0
+      - --parallel
+      - "1"
+      - --spec-type
+      - draft-mtp
+      - --spec-draft-n-max
+      - "3"
+      - --spec-draft-p-min
+      - "0.75"
+      - --chat-template-kwargs
+      - '{"reasoning_effort": "medium"}'   # the default when a request names none
     volumes:
       - ${AI_MODELS_DIR}/llama.cpp:/models
     # The port opens only once the model is downloaded and loaded: without a long start period
@@ -95,6 +110,10 @@ services:
       # than llama.cpp. Setup bakes it into its config: before-up.sh sets REINSTALL=1 for one
       # start when AI_STRATA_CONTEXT differs from it (no download, ~2 min).
       CONTEXT: ${AI_STRATA_CONTEXT}
+      # KV streaming: the context's KV cache in RAM, only a 32K window in VRAM, so more experts
+      # fit on the GPU (RTX 5060 Ti, IQ3_S, 128K: 45.6 -> 52.2 tok/s at a 19.5K prompt, +1 GB
+      # RAM). Setup turns it on only with room to spare by its estimate; "on" overrides that.
+      KV_STREAMING: ${AI_STRATA_KV_STREAMING}
       REINSTALL: ${STRATA_REINSTALL:-0}
       VISION: "no"
       GPU: "0"

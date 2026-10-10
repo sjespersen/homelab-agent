@@ -43,12 +43,18 @@ sed -i "s/^COMPOSE_PROFILES=.*/COMPOSE_PROFILES=\"$profiles\"/" .env
 # throwaway container of the Strata image edits it.
 strata_cfg=$models/strata/config/strata-$(sed -n 's/^AI_STRATA_QUANT="\(.*\)"$/\1/p' .env | tr '[:upper:]' '[:lower:]').json
 want_ctx=$(sed -n 's/^AI_STRATA_CONTEXT="\(.*\)"$/\1/p' .env)
+want_stream=$(sed -n 's/^AI_STRATA_KV_STREAMING="\(.*\)"$/\1/p' .env)
 reinstall=0
 if [[ -f $strata_cfg ]]; then
   have_ctx=$(python3 -c 'import json, sys; a = json.load(open(sys.argv[1]))["args"]; print(a[a.index("--max-context") + 1])' "$strata_cfg" 2>/dev/null)
+  have_stream=off
+  grep -q '"--kv-resident"' "$strata_cfg" && have_stream=on
   strata_image=$(docker compose --profile '*' config --images strata)
   if [[ $have_ctx != "$want_ctx" ]]; then
     echo "Strata: context $have_ctx -> $want_ctx, rerunning its setup on the next start"
+    reinstall=1
+  elif [[ ( $want_stream == on || $want_stream == off ) && $have_stream != "$want_stream" ]]; then
+    echo "Strata: KV streaming $have_stream -> $want_stream, rerunning its setup on the next start"
     reinstall=1
   elif ! grep -q '"fit_max_tokens": true' "$strata_cfg" && docker image inspect "$strata_image" >/dev/null 2>&1; then
     echo "Strata: turning on fit_max_tokens"
