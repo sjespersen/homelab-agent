@@ -30,16 +30,21 @@ services:
     environment:
       LLAMA_CACHE: /models   # -hf downloads land here
       HOME: /models
-    # First start downloads the GGUF from Hugging Face (13 GB for UD-Q3_K_XL). UD-Q3_K_XL plus
-    # a 32k q8_0 KV cache and MTP fits 16 GB of VRAM (14.4 GB); UD-IQ4_XS (14 GB) needs
-    # AI_CONTEXT=16384 or less. Keep the KV cache at 8 bits: 4-bit makes Qwen 3.8 loop.
+    # First start downloads AI_QWEN27B_FILE from AI_QWEN27B_REPO on Hugging Face. Measured on an
+    # RTX 5060 Ti 16 GB, all with MTP and an 8-bit KV cache:
+    #   unsloth UD-Q3_K_XL (13.1 GB)         32K context, 14.4 GB VRAM, 52 tok/s
+    #   ukisai Swift 1.5 GSQ-RCO IQ3_XXS-mtp 100K context, 15.2 GB VRAM, 60 tok/s, and it thinks
+    #     (10.4 GB, a fine-tune)             shorter: 67 s to a finished coding answer, 96 s above
+    # 128K doesn't fit either. Keep the KV cache at 8 bits: 4-bit makes Qwen 3.8 loop.
     # MTP (the draft head inside the GGUF) nearly doubles the output speed (RTX 5060 Ti:
     # 28 -> 52 tok/s, 91-96% of drafts accepted); it works best with one request at a time.
     # Qwen 3.8 thinks at "xhigh" unless asked otherwise, and clients like Hermes don't ask:
     # on a coding task that was >146 s without an answer, against 96 s for "medium" (~70 s "low").
     command:
-      - -hf
-      - unsloth/Qwen3.8-27B-GGUF:${AI_QWEN27B_QUANT}
+      - --hf-repo
+      - ${AI_QWEN27B_REPO}
+      - --hf-file
+      - ${AI_QWEN27B_FILE}
       - --no-mmproj
       - --alias
       - qwen3.8-27b
@@ -62,6 +67,14 @@ services:
       - "3"
       - --spec-draft-p-min
       - "0.75"
+      # For 100K on 16 GB: MTP keeps its own KV cache for the whole context (16-bit unless told),
+      # and a 256-token micro-batch halves the prompt-reading buffer (740 MB at 512).
+      - --spec-draft-type-k
+      - q8_0
+      - --spec-draft-type-v
+      - q8_0
+      - --ubatch-size
+      - "256"
       - --chat-template-kwargs
       - '{"reasoning_effort": "medium"}'   # the default when a request names none
     volumes:

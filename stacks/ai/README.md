@@ -111,9 +111,18 @@ curl http://<name>.local:8005/v1/chat/completions -H "Authorization: Bearer $key
 
 ## Tuning
 
-- `AI_QWEN27B_QUANT` (Unsloth GGUF files): `UD-Q3_K_XL` 13.2 GB (default, fits a 32k context
-  on 16 GB), `UD-IQ4_XS` 14.3 GB (better; set `AI_CONTEXT=16384`), `UD-IQ3_S` 12.0 GB (room
-  for a longer context).
+- `AI_QWEN27B_REPO` / `AI_QWEN27B_FILE`: the 27B GGUF. Measured on an RTX 5060 Ti 16 GB, with
+  MTP and an 8-bit KV cache:
+
+  | File | Context | VRAM | Output | Coding task to a finished answer |
+  |---|---|---|---|---|
+  | unsloth `Qwen3.8-27B-UD-Q3_K_XL.gguf` (default, 13.1 GB) | 32K | 14.4 GB | 52 tok/s | 96 s |
+  | ukisai `Swift-1.5-Qwen3.8-27B-GSQ-RCO-IQ3_XXS-mtp.gguf` (10.4 GB) | 100K | 15.2 GB | 60 tok/s | 67 s |
+
+  Swift 1.5 is a fine-tune that thinks shorter; set `AI_CONTEXT=102400` with it. 128K doesn't
+  fit 16 GB with either. Both found a fact at the start of a 90K-token prompt, but reading
+  that much took ~150 s (Strata: 57 s).
+- Keep the KV cache at 8 bits (the default here): 4-bit KV makes Qwen 3.8 loop.
 - `AI_STRATA_QUANT`: `IQ2_XS` (Strata's default, least RAM), `IQ3_XXS`, `IQ3_S` (default
   here), and larger ones; Strata's docs list RAM per quant. A new quant downloads again.
 - Changing these needs `./deploy.sh` (the switcher only starts and stops).
