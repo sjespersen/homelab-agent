@@ -67,6 +67,7 @@ def services():
             "title": labels["homelab.ai.title"],
             "about": labels.get("homelab.ai.about", ""),
             "kind": labels.get("homelab.ai.kind", "chat"),
+            "site": labels.get("homelab.ai.site", ""),
             "order": int(labels.get("homelab.ai.order", "9")),
             "state": c["State"],  # running, exited, created, ...
             "health": health,     # starting, healthy, unhealthy or None
@@ -360,15 +361,19 @@ Wake it with <code>./ai-model.sh wake</code> (Wake-on-LAN) or the power button.<
 <button data-power="poweroff" data-label="Shut down">Shut down</button></div></div></div>
 <p class="err" id="error"></p>
 <div class="card"><div class="title">API</div>
-<div class="about">OpenAI-compatible base URL for the chat models: <code id="api"></code>,
-key as Bearer token. Strata also speaks Anthropic's <code>/v1/messages</code>.</div></div>
+<div class="about">OpenAI-compatible base URL for the 27B and Strata: <code id="api"></code>,
+key as Bearer token. Strata also speaks Anthropic's <code>/v1/messages</code>.
+Web chat for all models: <a id="chat-link" href="#">Open WebUI</a>.</div></div>
 <script>
 const api = location.origin + '/v1';
 document.getElementById('api').textContent = api;
-// SwarmUI's address: the next port with plain ports, or swarm.<domain> with Pi-hole names.
-function swarmUrl() {
-  if (location.port) return location.protocol + '//' + location.hostname + ':' + (Number(location.port) + 1) + '/';
-  return location.protocol + '//' + location.hostname.replace(/^[^.]+/, 'swarm') + '/';
+document.getElementById('chat-link').href = siteUrl('chat');
+// The module's other sites: SwarmUI and the web chat, at the next ports with plain ports
+// (8006, 8007), or swarm.<domain> / chat.<domain> with Pi-hole names.
+function siteUrl(site) {
+  const offset = {swarm: 1, chat: 2}[site];
+  if (location.port) return location.protocol + '//' + location.hostname + ':' + (Number(location.port) + offset) + '/';
+  return location.protocol + '//' + location.hostname.replace(/^[^.]+/, site) + '/';
 }
 function stateText(s, switchingTo) {
   if (switchingTo === s.id) return ['busy', 'switching…'];
@@ -392,7 +397,7 @@ async function load() {
   document.getElementById('services').innerHTML = (d.services || []).map(s => {
     const [cls, text] = stateText(s, d.switching);
     const running = s.state === 'running';
-    const open = s.kind === 'image' && running ? `<a class="btn" href="${swarmUrl()}">Open</a>` : '';
+    const open = s.site && running ? `<a class="btn" href="${siteUrl(s.site)}">Open</a>` : '';
     const btn = running
       ? `<button ${busy ? 'disabled' : ''} onclick="go('none')">Stop</button>`
       : `<button class="primary" ${busy ? 'disabled' : ''} onclick="go('${s.id}')">Switch to this</button>`;

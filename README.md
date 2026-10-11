@@ -16,7 +16,7 @@ Every service except Caddy is optional (see [Modules](#modules)):
 | [Pi-hole](https://pi-hole.net) | `pihole.home.arpa` | DNS with ad and tracker blocking; also serves the `*.home.arpa` names |
 | [Uptime Kuma](https://github.com/louislam/uptime-kuma) | `status.home.arpa` | Uptime checks and alerts |
 | [Beszel](https://beszel.dev) | `server.home.arpa` | CPU, RAM, disk, temperatures, fans, per-container stats |
-| Local AI ([llama.cpp](https://github.com/ggml-org/llama.cpp), [Strata](https://github.com/Niko1221/Strata), [SwarmUI](https://github.com/mcmonkeyprojects/SwarmUI)) | `ai.home.arpa`, `<server>:8005`; `swarm.home.arpa`, `<server>:8006` | Qwen3.8-27B, Qwen3.8-Flash-Next or image generation on an NVIDIA GPU, a page to switch, OpenAI-compatible API. Opt-in |
+| Local AI ([llama.cpp](https://github.com/ggml-org/llama.cpp), [Strata](https://github.com/Niko1221/Strata), [SwarmUI](https://github.com/mcmonkeyprojects/SwarmUI), [Open WebUI](https://github.com/open-webui/open-webui), [Ollama](https://github.com/ollama/ollama)) | `ai.home.arpa`, `<server>:8005`; `swarm.home.arpa`, `<server>:8006`; `chat.home.arpa`, `<server>:8007` | Qwen3.8-27B, Qwen3.8-Flash-Next or image generation on an NVIDIA GPU, a page to switch, OpenAI-compatible API. Opt-in |
 | [Caddy](https://caddyserver.com) | port 80 | Gives every service a name; landing page at `http://<name>.local` |
 | [Tailscale](https://tailscale.com) | — | Reach everything from anywhere, no open ports |
 | [restic](https://restic.net) | — | Nightly encrypted backups, pulled to your Mac |
@@ -86,7 +86,7 @@ containers and closes its ports; its data stays in `/opt/stacks/<module>` (and i
 
 Without Pi-hole nobody hands out the `*.home.arpa` names, so Caddy serves each service on its
 own port instead: Hermes `:8001`, n8n `:8002`, Uptime Kuma `:8003`, Beszel `:8004`, Local AI
-`:8005`, SwarmUI `:8006`, all linked from `http://<name>.local`.
+`:8005`, SwarmUI `:8006`, web chat `:8007`, all linked from `http://<name>.local`.
 
 A module is a folder in `stacks/`:
 
@@ -250,6 +250,11 @@ every boot); keep the box somewhere it won't walk off.
   everyone out.
 - Model files from Hugging Face or Civitai can carry code: prefer `.safetensors` and `.gguf`
   over `.ckpt`/`.pt` files.
+- The web chat (ai module, Open WebUI, port 8007) has its own accounts, and the first one is the
+  admin. Create it right after the first deploy: until then anyone on `TRUSTED_NETS` or the
+  tailnet could. Its admin can download models and add Open WebUI "functions" and "tools",
+  which run Python inside its container (with the AI API key in its environment). Ollama isn't
+  published; only Open WebUI reaches it.
 - The local AI key can also suspend, restart or shut down the box (the switcher's Power card).
   A root service runs those three actions and nothing else.
 - With `WAKE_TARGETS` set, Hermes can wake those devices (and only those: the MACs come from

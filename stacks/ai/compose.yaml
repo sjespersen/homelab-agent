@@ -170,16 +170,18 @@ services:
     container_name: ai-swarmui
     labels:
       homelab.ai.title: SwarmUI
-      homelab.ai.about: "Images: SDXL, Flux and more, on ComfyUI; pick models and LoRAs in its UI"
+      homelab.ai.about: "Images: Krea 2, SDXL, Flux and more, on ComfyUI"
       homelab.ai.kind: image
       homelab.ai.order: "3"
+      homelab.ai.site: swarm   # the switcher's "Open" button: port 8006 / swarm.<DOMAIN>
     user: "${PUID}:${PGID}"
     cap_drop: [ALL]
     command: ["--forward_restart"]   # exit code 42 (restart from the UI) ends the container; Docker restarts it
     ports:
       - "127.0.0.1:7801:7801"
     volumes:
-      # Settings, workflows and your images: in /opt/stacks, so they're backed up.
+      # Settings and workflows: in /opt/stacks, so they're backed up. The generated images live
+      # here too but stay out of the backups (backup-excludes.txt).
       - ./data/swarm/Data:/SwarmUI/Data
       - ./data/swarm/Output:/SwarmUI/Output
       - ./data/swarm/CustomWorkflows:/SwarmUI/src/BuiltinExtensions/ComfyUIBackend/CustomWorkflows
@@ -202,6 +204,72 @@ services:
             - driver: cdi   # see the note at the top: survives systemd reloads
               device_ids: [nvidia.com/gpu=all]
               capabilities: [gpu]
+    restart: unless-stopped
+
+  # Ollama: models you download yourself in the web chat (Open WebUI, below). 8B-14B models run
+  # fully on a 16 GB GPU; bigger ones spill into RAM and get slow (a 70B on DDR4: ~1-2 tok/s).
+  # Not published: only Open WebUI reaches it, at http://ollama:11434 on this stack's network.
+  ollama:
+    profiles: [ollama]
+    image: ollama/ollama:latest@sha256:adca95a12c2b386a8f9a995e7fa0600e187e3323b5e5522f5a6c3b1ec73eff99  # 0.40.3
+    container_name: ai-ollama
+    labels:
+      homelab.ai.title: Ollama
+      homelab.ai.about: "Web chat models you download yourself; 8-14B fit the GPU"
+      homelab.ai.kind: chat
+      homelab.ai.order: "4"
+      homelab.ai.site: chat
+    user: "${PUID}:${PGID}"
+    environment:
+      HOME: /models
+      OLLAMA_MODELS: /models/models
+      OLLAMA_HOST: 0.0.0.0:11434
+      OLLAMA_FLASH_ATTENTION: "1"
+      OLLAMA_KV_CACHE_TYPE: q8_0          # 8 bits: 4-bit KV caches make models loop
+      OLLAMA_CONTEXT_LENGTH: "16384"      # a model's default context; the chat can ask for more
+      OLLAMA_KEEP_ALIVE: 30m
+    volumes:
+      - ${AI_MODELS_DIR}/ollama:/models
+    healthcheck:
+      test: ["CMD", "/bin/ollama", "list"]
+      interval: 30s
+      timeout: 10s
+      start_period: 2m
+      retries: 3
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: cdi
+              device_ids: [nvidia.com/gpu=all]
+              capabilities: [gpu]
+    restart: unless-stopped
+
+  # Open WebUI: a ChatGPT-like web chat at port 8007 (chat.<DOMAIN>), always on (CPU only). It
+  # chats with Ollama's models (and downloads new ones: Admin Panel -> Settings -> Models), and
+  # with the 27B and Strata through their API, whichever has the GPU. Its own accounts: the
+  # first one becomes admin; later sign-ups wait for the admin's approval.
+  webchat:
+    image: ghcr.io/open-webui/open-webui:main@sha256:e597ba2ca4425ff40f1f677930baae1278cc1e44cea399d5f588d5ce53611910  # 0.12.0
+    container_name: ai-webchat
+    user: "${PUID}:${PGID}"
+    ports:
+      - "127.0.0.1:3080:8080"
+    env_file:
+      - path: ./data/webchat.env   # OPENAI_API_KEYS (the AI API key); before-up.sh writes it
+        required: false
+    environment:
+      HOME: /app/backend/data
+      OLLAMA_BASE_URL: http://ollama:11434
+      # The 27B and Strata on this stack's network; only the one with the GPU answers.
+      OPENAI_API_BASE_URLS: "http://qwen27b:8080/v1;http://strata:8080/v1"
+      WEBUI_SECRET_KEY_FILE: /app/backend/data/.webui_secret_key   # sessions survive a recreate
+      DEFAULT_USER_ROLE: pending
+      SCARF_NO_ANALYTICS: "true"
+      DO_NOT_TRACK: "true"
+      ANONYMIZED_TELEMETRY: "false"
+    volumes:
+      - ./data/webchat:/app/backend/data
     restart: unless-stopped
 
   # The page at port 8005: which service runs, GPU memory, buttons to switch. Login: the API key.

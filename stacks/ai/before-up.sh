@@ -16,13 +16,19 @@ fi
 
 # Docker would create missing bind-mount folders as root; the containers run as you.
 models=$(sed -n 's/^AI_MODELS_DIR="\(.*\)"$/\1/p' .env)
-mkdir -p data/switcher data/swarm/{Data,Output,CustomWorkflows}
-for sub in llama.cpp strata swarm/Models swarm/dlbackend swarm/DLNodes swarm/Extensions; do
+mkdir -p data/switcher data/swarm/{Data,Output,CustomWorkflows} data/webchat
+for sub in llama.cpp strata ollama swarm/Models swarm/dlbackend swarm/DLNodes swarm/Extensions; do
   [[ -d $models/$sub ]] || mkdir -p "$models/$sub" || {
     echo "Can't create $models/$sub: run bootstrap.sh (./setup.sh) first, it prepares $models." >&2
     exit 1
   }
 done
+
+# Open WebUI reaches the 27B and Strata with the same API key (one per URL in its list).
+if [[ ! -s data/webchat.env ]]; then
+  key=$(sed -n 's/^API_KEY=//p' data/.env)
+  (umask 077; printf 'OPENAI_API_KEYS=%s;%s\n' "$key" "$key" >data/webchat.env)
+fi
 
 # Which service gets the GPU: the last one picked in the switcher (or ./ai-model.sh), else
 # AI_MODEL from the config; "none" after Stop. compose up starts only that one
@@ -94,7 +100,7 @@ done
 # active one, freeing the GPU and port 8080.
 docker compose --profile '*' create || exit 1
 for service in $services; do
-  [[ $service == "$active" || $service == switcher || $service == socket-proxy ]] && continue
+  [[ $service == "$active" || $service == switcher || $service == socket-proxy || $service == webchat ]] && continue
   if [[ -n $(docker compose --profile '*' ps -q "$service" 2>/dev/null) ]]; then
     echo "stopping $service ($active gets the GPU)"
     docker compose --profile '*' stop -t 60 "$service"

@@ -16,6 +16,7 @@ also suspend, restart or shut down the box.
 | `http://<name>.local:8005` | `ai.<DOMAIN>` | The switcher: what runs, GPU memory, buttons to switch |
 | `http://<name>.local:8005/v1` | `ai.<DOMAIN>/v1` | OpenAI-compatible API of whichever chat model runs (Strata also has `/v1/messages`) |
 | `http://<name>.local:8006` | `swarm.<DOMAIN>` | SwarmUI |
+| `http://<name>.local:8007` | `chat.<DOMAIN>` | Open WebUI: web chat for all models, downloads Ollama models |
 
 The switcher and SwarmUI ask for the AI API key once per browser; the API takes it as a Bearer
 token. It's `API_KEY` in `/opt/stacks/ai/data/.env` on the server.
@@ -87,6 +88,27 @@ headers, plus supported USB devices (e.g. an AMD Wraith Prism cooler on an inter
 Fans on a case hub or the case's LED button, and power supplies with their own controller, don't.
 List what it finds: `sudo QT_QPA_PLATFORM=offscreen openrgb --list-devices`.
 
+## Web chat (Open WebUI) and Ollama
+
+[Open WebUI](https://github.com/open-webui/open-webui) runs all the time (CPU only) at
+`http://<name>.local:8007` (`chat.<DOMAIN>` with Pi-hole): a ChatGPT-like chat for every model
+on the box. It talks to [Ollama](https://github.com/ollama/ollama) (the `ollama` service, for
+models you download yourself) and to the 27B and Strata through their API, whichever one has
+the GPU.
+
+- **Accounts:** the first account you create becomes the admin. Later sign-ups wait as
+  "pending" until the admin approves them (Admin Panel → Users); you can also turn sign-ups off
+  there (Admin Panel → Settings → General).
+- **New models:** switch to **Ollama** on the Local AI page, then in Open WebUI: Admin Panel →
+  Settings → Models → pull a model by name, e.g. `qwen2.5:14b`, or any GGUF on Hugging Face as
+  `hf.co/<user>/<repo>:<quant>`. They land in `AI_MODELS_DIR/ollama` (not backed up).
+- **What fits:** 8B-14B models run fully on a 16 GB GPU (`qwen2.5:14b`: 10 GB, ~29 tok/s on an
+  RTX 5060 Ti); bigger ones spill into RAM and get slow (a 70B on DDR4: ~1-2 tok/s). For hard
+  problems Strata is the faster and stronger choice.
+- Ollama's KV cache is 8-bit and a model's default context 16K (`OLLAMA_CONTEXT_LENGTH`).
+- Chats, accounts, settings and uploads are in `/opt/stacks/ai/data/webchat`, and **not** in the
+  backups (one database holds all of them). After a rebuild, create the account again.
+
 ## Image models
 
 Add models in SwarmUI's **Models → Download** tab (paste a model's download link), or save
@@ -129,10 +151,11 @@ curl http://<name>.local:8005/v1/chat/completions -H "Authorization: Bearer $key
 
 ## Files
 
-- `/opt/stacks/ai/data/`: the API key, the switcher's choice, SwarmUI's settings, workflows
-  and your images (`swarm/Output`). In the backups.
+- `/opt/stacks/ai/data/`: the API key, the switcher's choice, SwarmUI's settings and workflows.
+  In the backups, except the generated images (`swarm/Output`) and the web chat (`webchat`),
+  which stay out of them on purpose (`backup-excludes.txt`); copy images you want to keep.
 - `AI_MODELS_DIR`: `llama.cpp/`, `strata/`, and `swarm/` (image models, ComfyUI, extensions).
-  Not backed up; models download again. Keep your own LoRAs or checkpoints elsewhere too.
+  Not backed up; models download again. Keep copies of models you made or changed yourself elsewhere.
 
 ## Updates
 

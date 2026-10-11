@@ -1,0 +1,2 @@
+# Open WebUI has its own accounts.
+reverse_proxy 127.0.0.1:3080
