@@ -24,11 +24,9 @@ for sub in llama.cpp strata ollama swarm/Models swarm/dlbackend swarm/DLNodes sw
   }
 done
 
-# Open WebUI reaches the 27B and Strata with the same API key (one per URL in its list).
-if [[ ! -s data/webchat.env ]]; then
-  key=$(sed -n 's/^API_KEY=//p' data/.env)
-  (umask 077; printf 'OPENAI_API_KEYS=%s;%s\n' "$key" "$key" >data/webchat.env)
-fi
+# Open WebUI reaches the 27B and Strata through the switcher, with the API key.
+key=$(sed -n 's/^API_KEY=//p' data/.env)
+(umask 077; printf 'OPENAI_API_KEYS=%s\n' "$key" >data/webchat.env)
 
 # Which service gets the GPU: the last one picked in the switcher (or ./ai-model.sh), else
 # AI_MODEL from the config; "none" after Stop. compose up starts only that one

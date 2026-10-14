@@ -1,7 +1,3 @@
-# The chat models' API; everything else is the switcher page.
-handle /v1/* {
-	reverse_proxy 127.0.0.1:8080
-}
-handle {
-	reverse_proxy 127.0.0.1:8079
-}
+# The switcher: its page, and the chat models' API (/v1), which it passes to the model a
+# request names (starting it first). Long answers stream; no timeout cuts them off.
+reverse_proxy 127.0.0.1:8079

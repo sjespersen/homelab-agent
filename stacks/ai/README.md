@@ -14,7 +14,7 @@ also suspend, restart or shut down the box.
 | Address (no Pi-hole) | With Pi-hole | What |
 |---|---|---|
 | `http://<name>.local:8005` | `ai.<DOMAIN>` | The switcher: what runs, GPU memory, buttons to switch |
-| `http://<name>.local:8005/v1` | `ai.<DOMAIN>/v1` | OpenAI-compatible API of whichever chat model runs (Strata also has `/v1/messages`) |
+| `http://<name>.local:8005/v1` | `ai.<DOMAIN>/v1` | OpenAI-compatible API of the chat models; it starts the one a request names (Strata also has `/v1/messages`) |
 | `http://<name>.local:8006` | `swarm.<DOMAIN>` | SwarmUI |
 | `http://<name>.local:8007` | `chat.<DOMAIN>` | Open WebUI: web chat for all models, downloads Ollama models |
 
@@ -49,6 +49,12 @@ On the switcher page, or from your computer:
 ./ai-model.sh swarmui    # image generation
 ```
 
+The API switches too: a request whose `model` is `qwen3.8-27b` or `qwen3.8-flash-next` (or
+Strata's own `qwen3.8-flash-next-<quant>`, or the service names `qwen27b` and `strata`) first
+gives the GPU to that model, after requests still running on the other one finish, and waits
+until it has loaded. Any other name goes to the chat model that runs, or the last one used.
+`/v1/models` lists both. While SwarmUI has the GPU the API answers 503 instead of stopping it.
+
 Switching stops the running service (Strata takes up to a minute to release its locked RAM)
 and starts the other one; models already downloaded load in a minute or two. The choice is
 saved on the server (`data/switcher/active`): it survives reboots and deploys. `AI_MODEL` in the
@@ -57,6 +63,9 @@ first: `CONFIG=config.ai.env ./ai-model.sh strata`.
 
 ## Stop, suspend, shut down
 
+- **Idle unload:** with no API requests and no GPU load for `AI_IDLE_MINUTES` (default 30) the
+  chat model stops, as with Stop; the next API request starts it again (1-2 minutes, which that
+  request waits). `0` turns it off. It never stops SwarmUI or Ollama.
 - **Stop** on the running service's card (or `./ai-model.sh stop`) leaves the GPU empty and frees
   Strata's ~50 GB of RAM. An idle loaded model costs little power (a 16 GB RTX 50 card idles at
   ~6 W with Strata in its memory), so this is mostly about RAM.
@@ -93,8 +102,13 @@ List what it finds: `sudo QT_QPA_PLATFORM=offscreen openrgb --list-devices`.
 [Open WebUI](https://github.com/open-webui/open-webui) runs all the time (CPU only) at
 `http://<name>.local:8007` (`chat.<DOMAIN>` with Pi-hole): a ChatGPT-like chat for every model
 on the box. It talks to [Ollama](https://github.com/ollama/ollama) (the `ollama` service, for
-models you download yourself) and to the 27B and Strata through their API, whichever one has
-the GPU.
+models you download yourself) and to the 27B and Strata through the switcher's API, so picking
+one in the chat starts it.
+
+- **Set up before this change:** Open WebUI keeps its connections in its own database, so a box
+  that ran it before still talks to the models directly (only the one with the GPU answers).
+  Admin Panel → Settings → Connections: replace the two OpenAI URLs with one,
+  `http://switcher:8079/v1`, with the API key.
 
 - **Accounts:** the first account you create becomes the admin. Later sign-ups wait as
   "pending" until the admin approves them (Admin Panel → Users); you can also turn sign-ups off
@@ -129,7 +143,9 @@ curl http://<name>.local:8005/v1/chat/completions -H "Authorization: Bearer $key
 
 - OpenAI clients: base URL `http://<name>.local:8005/v1`, the key above.
 - Hermes or n8n on another server: use the AI box's Tailscale name, e.g. `http://<name>:8005/v1`.
-- While SwarmUI has the GPU, the API answers 502.
+- The first request after a switch or an idle stop waits while the model loads (1-2 minutes):
+  give clients a timeout longer than that.
+- While SwarmUI has the GPU, the API answers 503.
 
 ## Tuning
 
@@ -147,6 +163,8 @@ curl http://<name>.local:8005/v1/chat/completions -H "Authorization: Bearer $key
 - Keep the KV cache at 8 bits (the default here): 4-bit KV makes Qwen 3.8 loop.
 - `AI_STRATA_QUANT`: `IQ2_XS` (Strata's default, least RAM), `IQ3_XXS`, `IQ3_S` (default
   here), and larger ones; Strata's docs list RAM per quant. A new quant downloads again.
+- `AI_IDLE_MINUTES`: minutes without API requests or GPU load before the chat model stops (30;
+  `0`: never).
 - Changing these needs `./deploy.sh` (the switcher only starts and stops).
 
 ## Files

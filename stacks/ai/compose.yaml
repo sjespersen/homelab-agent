@@ -3,7 +3,8 @@
 #   strata   Qwen3.8-Flash-Next on Strata        same API on the same port
 #   swarmui  SwarmUI with ComfyUI, image models  web UI on 127.0.0.1:7801
 # The switcher (Caddy: port 8005, with the API under /v1) shows them and switches between them;
-# ./ai-model.sh does the same from your computer. Compose profiles keep the others from
+# ./ai-model.sh does the same from your computer. The API goes through the switcher: a request
+# naming the other chat model switches to it, and an idle chat model stops (AI_IDLE_MINUTES). Compose profiles keep the others from
 # starting on a deploy; before-up.sh creates all three so the switcher can start them.
 # The API key is in ./data/.env (before-up.sh creates it). Models, ComfyUI and its extensions
 # live in AI_MODELS_DIR, not in /opt/stacks, so they stay out of the backups.
@@ -21,6 +22,7 @@ services:
       homelab.ai.about: "Chat, dense 27B on llama.cpp; fast, all on the GPU"
       homelab.ai.kind: chat
       homelab.ai.order: "1"
+      homelab.ai.model: qwen3.8-27b   # API requests naming it switch to this service
     user: "${PUID}:${PGID}"
     ports:
       - "127.0.0.1:8080:8080"
@@ -112,6 +114,7 @@ services:
       homelab.ai.about: "Chat, 125B MoE on Strata; smarter, uses ~50 GB RAM"
       homelab.ai.kind: chat
       homelab.ai.order: "2"
+      homelab.ai.model: qwen3.8-flash-next   # also qwen3.8-flash-next-<quant>, Strata's own name
     ports:
       - "127.0.0.1:8080:8080"
     env_file:
@@ -261,8 +264,9 @@ services:
     environment:
       HOME: /app/backend/data
       OLLAMA_BASE_URL: http://ollama:11434
-      # The 27B and Strata on this stack's network; only the one with the GPU answers.
-      OPENAI_API_BASE_URLS: "http://qwen27b:8080/v1;http://strata:8080/v1"
+      # The 27B and Strata through the switcher, which starts the one a chat picks. Read on the
+      # first start only: Open WebUI keeps its connections in its database after that.
+      OPENAI_API_BASE_URLS: "http://switcher:8079/v1"
       WEBUI_SECRET_KEY_FILE: /app/backend/data/.webui_secret_key   # sessions survive a recreate
       DEFAULT_USER_ROLE: pending
       SCARF_NO_ANALYTICS: "true"
@@ -273,6 +277,7 @@ services:
     restart: unless-stopped
 
   # The page at port 8005: which service runs, GPU memory, buttons to switch. Login: the API key.
+  # Also the chat API (/v1): it starts the model a request names and stops an idle one.
   switcher:
     image: python:3.13-slim@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f  # 3.13.16
     container_name: ai-switcher
@@ -284,6 +289,7 @@ services:
     environment:
       DOCKER_PROXY: ai-socket-proxy:2375
       STATE_FILE: /state/active
+      IDLE_MINUTES: "${AI_IDLE_MINUTES}"   # stop the chat model after this long unused; 0: never
       LEDS: "${AI_LEDS}"   # yes: show the LED switch
       LEDS_EFFECT: "${AI_LEDS_ON_MODE}"   # defaults until changed on the page
       LEDS_SPEED: "${AI_LEDS_ON_SPEED}"

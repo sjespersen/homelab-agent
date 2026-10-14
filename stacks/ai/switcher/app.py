@@ -4,6 +4,10 @@ Only one service can have the GPU, so switching stops the others first. Talks to
 through a proxy that allows listing, starting and stopping containers and nothing else.
 The services are the containers labelled homelab.ai.title (see compose.yaml). Login is the
 AI API key; Caddy also asks /_ai/auth before letting anyone into SwarmUI.
+
+The chat API (/v1) goes through here too: a request naming the other chat model's name
+(homelab.ai.model) switches to it first, and after IDLE_MINUTES without requests or GPU load
+the chat model is stopped; the next request starts it again.
 """
 
 import hashlib
@@ -17,6 +21,7 @@ import subprocess
 import threading
 import time
 import urllib.parse
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 API_KEY = os.environ["API_KEY"]
@@ -39,8 +44,23 @@ LEDS_DEFAULTS = {"state": "", "effect": os.environ.get("LEDS_EFFECT", "Rainbow w
 SESSION = hmac.new(API_KEY.encode(), b"ai-switcher-session", hashlib.sha256).hexdigest()
 COOKIE = "ai_session"
 
+# The chat models' API port inside the stack's network (both listen on 8080).
+API_PORT = 8080
+# Stop the chat model after this many minutes without API requests or GPU load; 0: never.
+IDLE_MINUTES = float(os.environ.get("IDLE_MINUTES") or 0)
+# A first start downloads the model: wait that long for it before giving up on a request.
+START_TIMEOUT = 60 * 60
+MAX_BODY = 200 * 1024 * 1024
+HOP_HEADERS = {"connection", "keep-alive", "proxy-authenticate", "proxy-authorization", "te",
+               "trailer", "transfer-encoding", "upgrade", "host", "content-length"}
+
 switching = {"to": None, "error": None}
 lock = threading.Lock()
+# API requests in flight per service, and when the API or the GPU was last busy. A switch for
+# a request waits until the other service has no requests left.
+api = threading.Condition()
+inflight = {}
+activity = {"last": time.time(), "chat": None, "idle_stop": None}
 
 
 def docker(method, path):
@@ -68,6 +88,8 @@ def services():
             "about": labels.get("homelab.ai.about", ""),
             "kind": labels.get("homelab.ai.kind", "chat"),
             "site": labels.get("homelab.ai.site", ""),
+            # The names API requests use for it (the first is the one /v1/models lists).
+            "models": [m.strip().lower() for m in labels.get("homelab.ai.model", "").split(",") if m.strip()],
             "order": int(labels.get("homelab.ai.order", "9")),
             "state": c["State"],  # running, exited, created, ...
             "health": health,     # starting, healthy, unhealthy or None
@@ -163,6 +185,95 @@ def switch(target):
         lock.release()
 
 
+def started_at(service):
+    """Docker's StartedAt as a Unix time (0 if it never ran)."""
+    try:
+        when = datetime.fromisoformat(service["started"][:19]).replace(tzinfo=timezone.utc)
+        return when.timestamp()
+    except (TypeError, ValueError):
+        return 0
+
+
+def chat_target(model, all_services):
+    """The chat service for a request's model name: the service whose homelab.ai.model names
+    it (or a longer name starting with it, like Strata's qwen3.8-flash-next-iq3_s), else the
+    chat model that runs, else the last one used, else the first."""
+    chat = [s for s in all_services if s["models"]]
+    if not chat:
+        return None
+    name = model.strip().lower() if isinstance(model, str) else ""
+    for s in chat:
+        if name and (name == s["id"] or any(name == m or name.startswith(m + "-") for m in s["models"])):
+            return s
+    for s in chat:
+        if s["state"] == "running":
+            return s
+    last = activity["chat"]
+    if last is None:
+        try:
+            with open(STATE) as f:
+                last = f.read().strip()
+        except OSError:
+            pass
+    return next((s for s in chat if s["id"] == last), chat[0])
+
+
+def ensure_running(target):
+    """Gives the GPU to <target> unless it has it, and waits until it answers. Returns an
+    error message, or None."""
+    deadline = time.time() + START_TIMEOUT
+    while True:
+        svcs = {s["id"]: s for s in services()}
+        s = svcs[target]
+        if s["state"] == "running" and s["health"] in ("healthy", None):
+            return None
+        if s["state"] != "running":
+            image = [o for o in svcs.values() if o["kind"] == "image" and o["state"] == "running"]
+            if image:
+                return f"{image[0]['title']} has the GPU; switch on the Local AI page"
+            # Let requests to the other model finish first.
+            with api:
+                api.wait_for(lambda: not any(n for sid, n in inflight.items() if sid != target),
+                             timeout=max(1, deadline - time.time()))
+            if lock.acquire(timeout=120):
+                if {x["id"]: x for x in services()}[target]["state"] != "running":
+                    switching["to"] = target
+                    switch(target)  # releases the lock
+                    if switching["error"]:
+                        return switching["error"]
+                else:
+                    lock.release()
+        elif s["state"] == "running" and s["health"] == "unhealthy" and time.time() - started_at(s) > 600:
+            return f"{s['title']} runs but doesn't answer"
+        if time.time() > deadline:
+            return f"{s['title']} didn't start in time"
+        time.sleep(2)
+
+
+def idle_watch():
+    """Stops the chat model after IDLE_MINUTES without API requests or GPU load."""
+    while True:
+        time.sleep(30)
+        g = gpu()
+        if g and g["util"] >= 10:
+            activity["last"] = time.time()  # e.g. Open WebUI talking to it directly
+        with api:
+            busy = any(inflight.values())
+        if busy or switching["to"]:
+            continue
+        try:
+            running = [s for s in services() if s["models"] and s["state"] == "running"]
+        except Exception:
+            continue
+        for s in running:
+            if time.time() - max(activity["last"], started_at(s)) < IDLE_MINUTES * 60:
+                continue
+            if lock.acquire(blocking=False):
+                switching["to"] = "none"
+                switch("none")  # releases the lock
+                activity["idle_stop"] = {"service": s["title"], "at": int(time.time())}
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass
@@ -176,6 +287,98 @@ class Handler(BaseHTTPRequestHandler):
             if name == COOKIE and hmac.compare_digest(value, SESSION):
                 return True
         return False
+
+    def api_authed(self):
+        """The API key as a Bearer token, or as x-api-key (Anthropic clients)."""
+        key = self.headers.get("x-api-key", "").strip()
+        return self.authed() or bool(key and hmac.compare_digest(key, API_KEY))
+
+    def read_body(self):
+        if "chunked" in self.headers.get("Transfer-Encoding", "").lower():
+            body = b""
+            while True:
+                size = int(self.rfile.readline().split(b";")[0].strip() or b"0", 16)
+                if size == 0:
+                    while self.rfile.readline() not in (b"\r\n", b"\n", b""):
+                        pass
+                    return body
+                body += self.rfile.read(size)
+                self.rfile.readline()
+                if len(body) > MAX_BODY:
+                    return None
+        length = int(self.headers.get("Content-Length") or 0)
+        return None if length > MAX_BODY else self.rfile.read(length)
+
+    def api_error(self, code, message):
+        self.json({"error": {"message": message, "type": "homelab_switcher"}}, code)
+
+    def chat_api(self):
+        """/v1: answers /v1/models itself, sends everything else to the chat model the request
+        names (switching to it first) or the one that runs."""
+        if not self.api_authed():
+            return self.api_error(401, "missing or wrong API key")
+        try:
+            all_services = services()
+        except Exception as e:
+            return self.api_error(502, str(e))
+        path = urllib.parse.urlsplit(self.path).path.rstrip("/")
+        if self.command == "GET" and path == "/v1/models":
+            return self.json({"object": "list", "data": [
+                {"id": s["models"][0], "object": "model", "owned_by": "homelab", "service": s["id"],
+                 "loaded": s["state"] == "running"} for s in all_services if s["models"]]})
+        body = self.read_body() if self.command in ("POST", "PUT", "PATCH") else b""
+        if body is None:
+            return self.api_error(413, "request too large")
+        model = None
+        if body and "json" in self.headers.get("Content-Type", "json"):
+            try:
+                req = json.loads(body)
+                model = req.get("model") if isinstance(req, dict) else None
+            except ValueError:
+                pass
+        target = chat_target(model, all_services)
+        if target is None:
+            return self.api_error(503, "no chat model in this stack")
+        activity["last"] = time.time()
+        error = ensure_running(target["id"])
+        if error:
+            return self.api_error(503, error)
+        activity["chat"] = target["id"]
+        with api:
+            inflight[target["id"]] = inflight.get(target["id"], 0) + 1
+        try:
+            self.proxy(target["id"], body)
+        finally:
+            activity["last"] = time.time()
+            with api:
+                inflight[target["id"]] -= 1
+                api.notify_all()
+
+    def proxy(self, service, body):
+        """Passes the request on and streams the answer back as it comes (server-sent events)."""
+        headers = {k: v for k, v in self.headers.items() if k.lower() not in HOP_HEADERS}
+        conn = http.client.HTTPConnection(service, API_PORT, timeout=3600)
+        try:
+            conn.request(self.command, self.path, body=body or None, headers=headers)
+            resp = conn.getresponse()
+        except OSError as e:
+            conn.close()
+            return self.api_error(502, f"{service}: {e}")
+        try:
+            self.send_response(resp.status, resp.reason)
+            for k, v in resp.getheaders():
+                if k.lower() not in HOP_HEADERS or (k.lower() == "content-length" and resp.length is not None):
+                    self.send_header(k, v)
+            self.send_header("Connection", "close")
+            self.end_headers()
+            self.close_connection = True
+            while chunk := resp.read1(65536):
+                self.wfile.write(chunk)
+                self.wfile.flush()
+        except OSError:
+            pass  # the client went away; closing the upstream connection ends the generation
+        finally:
+            conn.close()
 
     def send(self, code, body=b"", ctype="text/plain; charset=utf-8", headers=()):
         if isinstance(body, str):
@@ -194,6 +397,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         url = urllib.parse.urlsplit(self.path)
+        if url.path == "/v1" or url.path.startswith("/v1/"):
+            return self.chat_api()
         if url.path == "/_ai/auth":
             # Caddy's forward_auth for SwarmUI: 2xx lets the request through.
             if self.authed():
@@ -217,11 +422,20 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 return self.json({"error": str(e)}, 502)
             return self.json({"services": svcs, "gpu": gpu(), "switching": switching["to"],
-                              "error": switching["error"], "leds": leds()})
+                              "error": switching["error"], "leds": leds(),
+                              "idle_minutes": IDLE_MINUTES, "idle_stop": activity["idle_stop"]})
         self.send(404, "not found")
+
+    def do_OPTIONS(self):
+        # CORS preflight for browser clients of the API; the answers carry the model's own headers.
+        self.send(204, headers=[("Access-Control-Allow-Origin", "*"),
+                                ("Access-Control-Allow-Methods", "GET, POST, OPTIONS"),
+                                ("Access-Control-Allow-Headers", "Authorization, Content-Type, x-api-key")])
 
     def do_POST(self):
         url = urllib.parse.urlsplit(self.path)
+        if url.path == "/v1" or url.path.startswith("/v1/"):
+            return self.chat_api()
         length = int(self.headers.get("Content-Length") or 0)
         raw = self.rfile.read(min(length, 10000)).decode()
         if url.path == "/_ai/login":
@@ -363,7 +577,9 @@ Wake it with <code>./ai-model.sh wake</code> (Wake-on-LAN) or the power button.<
 <div class="card"><div class="title">API</div>
 <div class="about">OpenAI-compatible base URL for the 27B and Strata: <code id="api"></code>,
 key as Bearer token. Strata also speaks Anthropic's <code>/v1/messages</code>.
-Web chat for all models: <a id="chat-link" href="#">Open WebUI</a>.</div></div>
+A request naming the other model (<code>qwen3.8-27b</code>, <code>qwen3.8-flash-next</code>) switches to it first.
+Web chat for all models: <a id="chat-link" href="#">Open WebUI</a>.</div>
+<div class="about" id="idle"></div></div>
 <script>
 const api = location.origin + '/v1';
 document.getElementById('api').textContent = api;
@@ -406,6 +622,10 @@ async function load() {
       <div class="actions">${open}${btn}</div></div></div>`;
   }).join('');
   document.getElementById('error').textContent = d.error || '';
+  const idle = d.idle_stop;
+  document.getElementById('idle').textContent = (d.idle_minutes
+    ? `The chat model stops after ${d.idle_minutes} min without requests; the next request starts it again.` : '')
+    + (idle ? ` Last stopped when idle: ${idle.service}, ${new Date(idle.at * 1000).toLocaleString()}.` : '');
   renderLeds(d.leds);
 }
 // The LED card is built once; later loads only update it, so a control you're using isn't redrawn.
@@ -499,4 +719,6 @@ load(); setInterval(load, 3000);
 </script></main></body></html>"""
 
 if __name__ == "__main__":
+    if IDLE_MINUTES > 0:
+        threading.Thread(target=idle_watch, daemon=True).start()
     ThreadingHTTPServer(("0.0.0.0", 8079), Handler).serve_forever()
