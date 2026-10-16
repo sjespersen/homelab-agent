@@ -211,9 +211,8 @@ services:
 
   # Ollama: models you download yourself in the web chat (Open WebUI, below). 8B-14B models run
   # fully on a 16 GB GPU; bigger ones spill into RAM and get slow (a 70B on DDR4: ~1-2 tok/s).
-  # Not published: only Open WebUI reaches it, at http://ollama:11434 on this stack's network.
+  # Not published: Open WebUI reaches it through the switcher (http://switcher:8079/ollama).
   ollama:
-    profiles: [ollama]
     image: ollama/ollama:latest@sha256:adca95a12c2b386a8f9a995e7fa0600e187e3323b5e5522f5a6c3b1ec73eff99  # 0.40.3
     container_name: ai-ollama
     labels:
@@ -222,6 +221,10 @@ services:
       homelab.ai.kind: chat
       homelab.ai.order: "4"
       homelab.ai.site: chat
+      # Runs all the time (no profile): it only holds the GPU while a model is loaded. The
+      # switcher unloads its models when another service gets the GPU, and Open WebUI's chats
+      # reach it through the switcher (/ollama), which gives it the GPU first.
+      homelab.ai.always-on: "true"
     user: "${PUID}:${PGID}"
     environment:
       HOME: /models
@@ -263,7 +266,9 @@ services:
         required: false
     environment:
       HOME: /app/backend/data
-      OLLAMA_BASE_URL: http://ollama:11434
+      # Ollama through the switcher, which gives it the GPU when a chat picks one of its
+      # models. Like the URL below, read on the first start only.
+      OLLAMA_BASE_URL: http://switcher:8079/ollama
       # The 27B and Strata through the switcher, which starts the one a chat picks. Read on the
       # first start only: Open WebUI keeps its connections in its database after that.
       OPENAI_API_BASE_URLS: "http://switcher:8079/v1"

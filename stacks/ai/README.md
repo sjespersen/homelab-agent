@@ -65,7 +65,8 @@ first: `CONFIG=config.ai.env ./ai-model.sh strata`.
 
 - **Idle unload:** with no API requests and no GPU load for `AI_IDLE_MINUTES` (default 30) the
   chat model stops, as with Stop; the next API request starts it again (1-2 minutes, which that
-  request waits). `0` turns it off. It never stops SwarmUI or Ollama.
+  request waits). `0` turns it off. It never stops SwarmUI or Ollama (Ollama unloads its own
+  models after 30 minutes, `OLLAMA_KEEP_ALIVE`).
 - **Stop** on the running service's card (or `./ai-model.sh stop`) leaves the GPU empty and frees
   Strata's ~50 GB of RAM. An idle loaded model costs little power (a 16 GB RTX 50 card idles at
   ~6 W with Strata in its memory), so this is mostly about RAM.
@@ -102,19 +103,25 @@ List what it finds: `sudo QT_QPA_PLATFORM=offscreen openrgb --list-devices`.
 [Open WebUI](https://github.com/open-webui/open-webui) runs all the time (CPU only) at
 `http://<name>.local:8007` (`chat.<DOMAIN>` with Pi-hole): a ChatGPT-like chat for every model
 on the box. It talks to [Ollama](https://github.com/ollama/ollama) (the `ollama` service, for
-models you download yourself) and to the 27B and Strata through the switcher's API, so picking
-one in the chat starts it.
+models you download yourself) and to the 27B and Strata, all through the switcher, so every
+model is always listed and picking one in the chat gives it the GPU.
 
+- **Ollama runs all the time** and only holds the GPU while it has a model loaded (it unloads
+  after 30 minutes unused). A chat with one of its models first stops the 27B or Strata, after
+  their requests finish; switching to another service, or asking the API for the 27B or
+  Strata, unloads Ollama's model instead of stopping Ollama. While SwarmUI has the GPU, Ollama
+  chats get an error instead.
 - **Set up before this change:** Open WebUI keeps its connections in its own database, so a box
-  that ran it before still talks to the models directly (only the one with the GPU answers).
-  Admin Panel → Settings → Connections: replace the two OpenAI URLs with one,
-  `http://switcher:8079/v1`, with the API key.
+  that ran it before still talks to the models directly. Admin Panel → Settings → Connections:
+  the OpenAI URL is `http://switcher:8079/v1` (one URL, with the API key), and the Ollama URL
+  `http://switcher:8079/ollama` (no key).
+- **Not for Hermes:** the Ollama models aren't in the API (`/v1`), only in Open WebUI: their
+  16K context is too small for agents.
 
 - **Accounts:** the first account you create becomes the admin. Later sign-ups wait as
   "pending" until the admin approves them (Admin Panel → Users); you can also turn sign-ups off
   there (Admin Panel → Settings → General).
-- **New models:** switch to **Ollama** on the Local AI page, then in Open WebUI: Admin Panel →
-  Settings → Models → pull a model by name, e.g. `qwen2.5:14b`, or any GGUF on Hugging Face as
+- **New models:** in Open WebUI, Admin Panel → Settings → Models → pull a model by name, e.g. `qwen2.5:14b`, or any GGUF on Hugging Face as
   `hf.co/<user>/<repo>:<quant>`. They land in `AI_MODELS_DIR/ollama` (not backed up).
 - **What fits:** 8B-14B models run fully on a 16 GB GPU (`qwen2.5:14b`: 10 GB, ~29 tok/s on an
   RTX 5060 Ti); bigger ones spill into RAM and get slow (a 70B on DDR4: ~1-2 tok/s). For hard

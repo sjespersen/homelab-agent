@@ -166,7 +166,9 @@ agent) gets a lot. Read this before you put anything valuable on the box.
 - The local AI API, switcher page and SwarmUI (ports 8005 and 8006, via Caddy) need the AI API
   key; the engines themselves listen on `127.0.0.1` only. The API (`/v1`) takes only the key
   itself, not the switcher page's login cookie, so another web page you open can't use your
-  login to send requests to the models or start them. The switcher reaches Docker through a
+  login to send requests to the models or start them. Ollama's own API passes through the
+  switcher at `/ollama` without a login, for Open WebUI; Caddy doesn't pass `/ollama` on, so
+  only the AI stack's network and the server itself reach it, as before. The switcher reaches Docker through a
   proxy that only lists, starts and stops containers, on an internal network nothing else is on.
 - Hermes pushes to GitHub with per-repo deploy keys, not your account.
 - The Mac's backup key can only read the backup folder (`rrsync -ro`).

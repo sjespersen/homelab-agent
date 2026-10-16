@@ -49,6 +49,12 @@ COOKIE = "ai_session"
 
 # The chat models' API port inside the stack's network (both listen on 8080).
 API_PORT = 8080
+# Ollama runs all the time (homelab.ai.always-on): it only takes the GPU while it has a model
+# loaded. Open WebUI reaches it through /ollama here; requests that run a model give it the
+# GPU first (stopping the 27B or Strata), and switching to another service unloads its models.
+OLLAMA_HOST, OLLAMA_PORT = "ollama", 11434
+OLLAMA_GPU_PATHS = {"/api/chat", "/api/generate", "/api/embed", "/api/embeddings",
+                    "/v1/chat/completions", "/v1/completions", "/v1/embeddings", "/v1/responses"}
 # Stop the chat model after this many minutes without API requests or GPU load; 0: never.
 IDLE_MINUTES = float(os.environ.get("IDLE_MINUTES") or 0)
 # A first start downloads the model: wait that long for it before giving up on a request.
@@ -96,6 +102,8 @@ def services():
             # The names API requests use for it (the first is the one /v1/models lists).
             "models": [m.strip().lower() for m in labels.get("homelab.ai.model", "").split(",") if m.strip()],
             "order": int(labels.get("homelab.ai.order", "9")),
+            # Never stopped for a switch; it gives the GPU back by unloading its models.
+            "always_on": labels.get("homelab.ai.always-on") == "true",
             "state": c["State"],  # running, exited, created, ...
             "health": health,     # starting, healthy, unhealthy or None
             "started": detail["State"].get("StartedAt"),
@@ -174,11 +182,16 @@ def switch(target):
         if target != "none" and target not in {s["id"] for s in all_services}:
             raise RuntimeError(f"unknown service {target}")
         for s in all_services:
-            if s["id"] != target and s["state"] in ("running", "restarting"):
+            if s["id"] == target:
+                continue
+            if s["always_on"]:
+                if s["state"] == "running":
+                    ollama_unload()
+            elif s["state"] in ("running", "restarting"):
                 # Strata needs up to a minute to release its page-locked RAM.
                 docker("POST", f"/containers/{s['container']}/stop?t=60")
         for s in all_services:
-            if s["id"] == target and s["state"] != "running":
+            if (s["id"] == target or s["always_on"]) and s["state"] != "running":
                 docker("POST", f"/containers/{s['container']}/start")
         with open(STATE, "w") as f:
             f.write(target + "\n")
@@ -192,6 +205,68 @@ def switch(target):
     finally:
         switching["to"] = None
         lock.release()
+
+
+def ollama_call(method, path, body=None, timeout=10):
+    conn = http.client.HTTPConnection(OLLAMA_HOST, OLLAMA_PORT, timeout=timeout)
+    try:
+        conn.request(method, path, body=json.dumps(body) if body is not None else None,
+                     headers={"Content-Type": "application/json"})
+        data = conn.getresponse().read()
+        return json.loads(data) if data else {}
+    finally:
+        conn.close()
+
+
+def ollama_loaded():
+    """The models Ollama has in memory (its /api/ps), or [] if it doesn't answer."""
+    try:
+        return [m.get("name") or m.get("model") for m in ollama_call("GET", "/api/ps").get("models", [])]
+    except (OSError, ValueError):
+        return []
+
+
+def ollama_unload():
+    """Unloads Ollama's models (keep_alive 0) and waits until their GPU memory is free."""
+    for name in ollama_loaded():
+        try:
+            ollama_call("POST", "/api/generate", {"model": name, "keep_alive": 0}, timeout=60)
+        except (OSError, ValueError):
+            pass
+    for _ in range(30):
+        if not ollama_loaded():
+            return
+        time.sleep(1)
+    raise RuntimeError("Ollama didn't unload its models")
+
+
+def ensure_ollama():
+    """Gives the GPU to Ollama for a request that runs a model: stops the 27B or Strata after
+    their requests finish. Returns an error message, or None."""
+    deadline = time.time() + START_TIMEOUT
+    while True:
+        svcs = services()
+        ollama = next((s for s in svcs if s["always_on"]), None)
+        if ollama is None:
+            return "no Ollama in this stack"
+        others = [s for s in svcs if not s["always_on"] and s["state"] in ("running", "restarting")]
+        if ollama["state"] == "running" and not others:
+            return None
+        image = [s for s in others if s["kind"] == "image"]
+        if image:
+            return f"{image[0]['title']} has the GPU; switch on the Local AI page"
+        # Let requests to the other model finish first.
+        with api:
+            api.wait_for(lambda: not any(n for sid, n in inflight.items() if sid != ollama["id"]),
+                         timeout=max(1, deadline - time.time()))
+        if lock.acquire(timeout=120):
+            switching["to"] = ollama["id"]
+            switch(ollama["id"])  # releases the lock
+            if switching["error"]:
+                return switching["error"]
+        if time.time() > deadline:
+            return "Ollama didn't get the GPU in time"
+        time.sleep(1)
 
 
 def started_at(service):
@@ -381,7 +456,7 @@ class Handler(BaseHTTPRequestHandler):
             with api:
                 inflight[target["id"]] = inflight.get(target["id"], 0) + 1
             try:
-                self.proxy(target["id"], body)
+                self.proxy(target["id"], API_PORT, self.path, body)
             finally:
                 with api:
                     inflight[target["id"]] -= 1
@@ -392,16 +467,50 @@ class Handler(BaseHTTPRequestHandler):
                 activity["last"] = time.time()
                 api.notify_all()
 
-    def proxy(self, service, body):
+    def ollama_api(self):
+        """/ollama: Ollama's own API for Open WebUI (models, downloads, chats). A request that
+        runs a model gives the GPU to Ollama first. No login: Caddy doesn't pass /ollama on, so
+        only the stack's network (Open WebUI) and the host reach it, as they reach Ollama."""
+        path = self.path[len("/ollama"):] or "/"
+        if not path.startswith("/"):
+            return self.send(404, "not found")
+        body = self.read_body() if self.command in ("POST", "PUT", "PATCH", "DELETE") else b""
+        if body is None:
+            return self.json({"error": "request too large"}, 413)
+        runs_model = urllib.parse.urlsplit(path).path in OLLAMA_GPU_PATHS
+        if runs_model and body:
+            try:
+                req = json.loads(body)
+                # An unload request (keep_alive 0 and nothing to answer) needs no GPU.
+                if isinstance(req, dict) and str(req.get("keep_alive")) in ("0", "0s") \
+                        and not (req.get("prompt") or req.get("messages")):
+                    runs_model = False
+            except ValueError:
+                pass
+        if not runs_model:
+            return self.proxy(OLLAMA_HOST, OLLAMA_PORT, path, body)
+        error = ensure_ollama()
+        if error:
+            return self.json({"error": error}, 503)
+        with api:
+            inflight["ollama"] = inflight.get("ollama", 0) + 1
+        try:
+            self.proxy(OLLAMA_HOST, OLLAMA_PORT, path, body)
+        finally:
+            with api:
+                inflight["ollama"] -= 1
+                api.notify_all()
+
+    def proxy(self, host, port, path, body):
         """Passes the request on and streams the answer back as it comes (server-sent events)."""
         headers = {k: v for k, v in self.headers.items() if k.lower() not in HOP_HEADERS}
-        conn = http.client.HTTPConnection(service, API_PORT, timeout=3600)
+        conn = http.client.HTTPConnection(host, port, timeout=3600)
         try:
-            conn.request(self.command, self.path, body=body or None, headers=headers)
+            conn.request(self.command, path, body=body or None, headers=headers)
             resp = conn.getresponse()
         except OSError as e:
             conn.close()
-            return self.api_error(502, f"{service}: {e}")
+            return self.api_error(502, f"{host}: {e}")
         try:
             self.send_response(resp.status, resp.reason)
             for k, v in resp.getheaders():
@@ -435,6 +544,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         url = urllib.parse.urlsplit(self.path)
+        if url.path == "/ollama" or url.path.startswith("/ollama/"):
+            return self.ollama_api()
         if url.path == "/v1" or url.path.startswith("/v1/"):
             return self.chat_api()
         if url.path == "/_ai/auth":
@@ -459,9 +570,18 @@ class Handler(BaseHTTPRequestHandler):
                 svcs = services()
             except Exception as e:
                 return self.json({"error": str(e)}, 502)
+            for s in svcs:
+                if s["always_on"] and s["state"] == "running":
+                    s["loaded"] = ollama_loaded()
             return self.json({"services": svcs, "gpu": gpu(), "switching": switching["to"],
                               "error": switching["error"], "leds": leds(),
                               "idle_minutes": IDLE_MINUTES, "idle_stop": activity["idle_stop"]})
+        self.send(404, "not found")
+
+    def do_DELETE(self):
+        # Ollama's DELETE /api/delete (Open WebUI removing a model).
+        if urllib.parse.urlsplit(self.path).path.startswith("/ollama/"):
+            return self.ollama_api()
         self.send(404, "not found")
 
     def do_OPTIONS(self):
@@ -472,6 +592,8 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         url = urllib.parse.urlsplit(self.path)
+        if url.path == "/ollama" or url.path.startswith("/ollama/"):
+            return self.ollama_api()
         if url.path == "/v1" or url.path.startswith("/v1/"):
             return self.chat_api()
         length = int(self.headers.get("Content-Length") or 0)
@@ -631,8 +753,12 @@ function siteUrl(site) {
 }
 function stateText(s, switchingTo) {
   if (switchingTo === s.id) return ['busy', 'switching…'];
-  if (switchingTo && s.state === 'running') return ['busy', 'stopping…'];
+  if (switchingTo && s.always_on && s.loaded && s.loaded.length) return ['busy', 'unloading…'];
+  if (switchingTo && s.state === 'running' && !s.always_on) return ['busy', 'stopping…'];
   if (s.state !== 'running') return ['off', 'stopped'];
+  if (s.always_on) return s.loaded && s.loaded.length
+    ? ['on', 'has the GPU: ' + s.loaded.join(', ')]
+    : ['off', 'ready, no model loaded (a chat in Open WebUI loads one)'];
   if (s.health === 'starting') return ['busy', 'starting (first start downloads the model)'];
   if (s.health === 'unhealthy') return ['bad', 'running, not answering'];
   return ['on', 'running'];
@@ -650,8 +776,9 @@ async function load() {
   const busy = !!d.switching;
   document.getElementById('services').innerHTML = (d.services || []).map(s => {
     const [cls, text] = stateText(s, d.switching);
-    const running = s.state === 'running';
-    const open = s.site && running ? `<a class="btn" href="${siteUrl(s.site)}">Open</a>` : '';
+    // Ollama runs all the time; it only holds the GPU while a model is loaded.
+    const running = s.always_on ? !!(s.loaded && s.loaded.length) : s.state === 'running';
+    const open = s.site && s.state === 'running' ? `<a class="btn" href="${siteUrl(s.site)}">Open</a>` : '';
     const btn = running
       ? `<button ${busy ? 'disabled' : ''} onclick="go('none')">Stop</button>`
       : `<button class="primary" ${busy ? 'disabled' : ''} onclick="go('${s.id}')">Switch to this</button>`;
