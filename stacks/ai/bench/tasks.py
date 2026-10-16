@@ -672,3 +672,802 @@ def cheapest(grid, portals):
                 dist[q] = nd; heapq.heappush(pq, (nd, q))
     return -1
 """)
+
+
+# --- The hard set: longer programs with several parts (./coding_bench.py run --set hard). ---
+
+NO_IMPORT = '''
+_src = open(__file__).read().split("# --- tests ---")[0]
+for _mod in {mods}:
+    assert not re.search(r"^\\s*(import|from)\\s+" + _mod + r"\\b", _src, re.M), "uses " + _mod
+'''
+
+
+def hard(id, prompt, tests, reference, forbid=()):
+    pre = ("import re\n" + NO_IMPORT.format(mods=repr(list(forbid)))) if forbid else ""
+    task(id, prompt, pre + tests.strip(), reference)
+    TASKS[-1]["set"] = "hard"
+
+
+hard("regex_engine", """
+Write a Python function `fullmatch(pattern, text)` that returns True if the whole `text` matches
+`pattern`, implementing the regex engine yourself (don't import re or any regex library).
+Support: literal characters; `.` (any character); `*`, `+`, `?` (greedy or not doesn't matter,
+only whether it matches); alternation `|` with the lowest precedence; grouping `( )` (an empty
+group `()` matches the empty string); character classes `[abc]`, ranges `[a-z0-9]`, negated
+`[^...]` (a `]` right after `[` or `[^` is literal, a `-` first or last is literal); and `\\` to
+escape any special character, inside or outside a class. It must not take exponential time:
+patterns like `(a*)*b` against 40 `a`s must answer in well under a second. Raise ValueError for
+invalid patterns (unbalanced parentheses, unclosed class, a quantifier with nothing before it,
+a trailing backslash).
+""", """
+import random, time
+cases = [("abc", "abc", True), ("abc", "abd", False), ("a.c", "axc", True), ("a*", "", True),
+         ("a+", "", False), ("colou?r", "color", True), ("colou?r", "colour", True),
+         ("cat|dog", "dog", True), ("cat|dog", "cats", False), ("(ab)+", "ababab", True),
+         ("(ab)+", "aba", False), ("[a-c]+x", "abcax", True), ("[^0-9]*", "abc", True),
+         ("[^0-9]*", "ab1", False), ("[]a]+", "]a]", True), ("[a-]+", "a-a", True),
+         ("\\\\.\\\\*", ".*", True), ("\\\\.", "x", False), ("[\\\\]]", "]", True), ("()", "", True),
+         ("a(|b)c", "ac", True), ("a(|b)c", "abc", True), ("(a|b)*abb", "babaabb", True),
+         ("x*y*z*", "xxzz", True), ("((a))", "a", True), ("a|", "", True), ("|a", "a", True)]
+for p, t, want in cases:
+    assert fullmatch(p, t) == want, (p, t, want)
+t0 = time.time()
+assert fullmatch("(a*)*b", "a" * 40) is False
+assert fullmatch("(a|aa)*c", "a" * 40) is False
+assert fullmatch("(x+x+)+y", "x" * 40) is False
+assert time.time() - t0 < 2, "exponential"
+for bad in ["(ab", "ab)", "[ab", "*a", "a**", "a|*", "\\\\", "(*)", "[a-"]:
+    try:
+        fullmatch(bad, "a"); raise AssertionError("no ValueError for " + repr(bad))
+    except ValueError:
+        pass
+rng = random.Random(5)
+def gen(d=0):
+    k = rng.random()
+    if d > 3 or k < 0.35:
+        return rng.choice(["a", "b", ".", "[ab]", "[^a]", "c"])
+    if k < 0.55:
+        return gen(d + 1) + gen(d + 1)
+    if k < 0.7:
+        return "(" + gen(d + 1) + "|" + gen(d + 1) + ")"
+    return "(" + gen(d + 1) + ")" + rng.choice("*+?")
+for _ in range(1500):
+    p = gen()
+    s = "".join(rng.choice("abc") for _ in range(rng.randrange(7)))
+    assert fullmatch(p, s) == bool(re.fullmatch(p, s)), (p, s)
+""", """
+def fullmatch(pattern, text):
+    # parse into an AST, compile to an NFA (Thompson), simulate with state sets
+    pos = 0
+    n = len(pattern)
+    def peek():
+        return pattern[pos] if pos < n else None
+    def parse_alt():
+        nonlocal pos
+        branches = [parse_seq()]
+        while peek() == "|":
+            pos += 1
+            branches.append(parse_seq())
+        return ("alt", branches) if len(branches) > 1 else branches[0]
+    def parse_seq():
+        nonlocal pos
+        items = []
+        while peek() is not None and peek() not in "|)":
+            atom = parse_atom()
+            while peek() is not None and peek() in "*+?":
+                if atom[0] == "rep_marker":
+                    raise ValueError
+                atom = (peek(), atom); pos += 1
+                if peek() is not None and peek() in "*+?":
+                    raise ValueError
+            items.append(atom)
+        return ("seq", items)
+    def parse_atom():
+        nonlocal pos
+        c = peek()
+        if c in "*+?":
+            raise ValueError
+        if c == "(":
+            pos += 1
+            inner = parse_alt()
+            if peek() != ")":
+                raise ValueError
+            pos += 1
+            return inner
+        if c == "[":
+            pos += 1
+            neg = False
+            if peek() == "^":
+                neg = True; pos += 1
+            items = []
+            first = True
+            while True:
+                ch = peek()
+                if ch is None:
+                    raise ValueError
+                if ch == "]" and not first:
+                    pos += 1; break
+                first = False
+                if ch == "\\\\":
+                    pos += 1
+                    if peek() is None:
+                        raise ValueError
+                    ch = peek()
+                pos += 1
+                if peek() == "-" and pos + 1 < n and pattern[pos + 1] != "]":
+                    pos += 1
+                    hi = peek()
+                    if hi == "\\\\":
+                        pos += 1
+                        if peek() is None:
+                            raise ValueError
+                        hi = peek()
+                    pos += 1
+                    items.append((ch, hi))
+                else:
+                    items.append((ch, ch))
+            return ("class", neg, items)
+        if c == "\\\\":
+            pos += 1
+            if peek() is None:
+                raise ValueError
+            ch = peek(); pos += 1
+            return ("char", ch)
+        pos += 1
+        if c == ".":
+            return ("any",)
+        return ("char", c)
+    ast = parse_alt()
+    if pos != n:
+        raise ValueError
+    # NFA: states are ints; trans[s] = list of (pred or None for epsilon, target)
+    trans = []
+    def new():
+        trans.append([]); return len(trans) - 1
+    def build(node):
+        kind = node[0]
+        if kind in ("char", "any", "class"):
+            s, e = new(), new()
+            if kind == "char":
+                pred = (lambda ch, c=node[1]: ch == c)
+            elif kind == "any":
+                pred = (lambda ch: True)
+            else:
+                neg, items = node[1], node[2]
+                pred = (lambda ch, neg=neg, items=items: any(lo <= ch <= hi for lo, hi in items) != neg)
+            trans[s].append((pred, e)); return s, e
+        if kind == "seq":
+            s = new(); cur = s
+            for it in node[1]:
+                a, b = build(it); trans[cur].append((None, a)); cur = b
+            return s, cur
+        if kind == "alt":
+            s, e = new(), new()
+            for br in node[1]:
+                a, b = build(br); trans[s].append((None, a)); trans[b].append((None, e))
+            return s, e
+        a, b = build(node[1]); s, e = new(), new()
+        trans[s].append((None, a)); trans[b].append((None, e))
+        if kind in "*?":
+            trans[s].append((None, e))
+        if kind in "*+":
+            trans[b].append((None, a))
+        return s, e
+    start, end = build(ast)
+    def closure(states):
+        stack, seen = list(states), set(states)
+        while stack:
+            s = stack.pop()
+            for pred, t in trans[s]:
+                if pred is None and t not in seen:
+                    seen.add(t); stack.append(t)
+        return seen
+    cur = closure({start})
+    for ch in text:
+        cur = closure({t for s in cur for pred, t in trans[s] if pred is not None and pred(ch)})
+        if not cur:
+            return False
+    return end in cur
+""", forbid=("re", "regex"))
+
+hard("json_parser", """
+Write a Python function `parse(text)` that parses a JSON document (RFC 8259) and returns the same
+Python value json.loads would, without importing json or any parser library: objects -> dict
+(a repeated key keeps the last value), arrays -> list, strings (with all escapes, including
+\\uXXXX and surrogate pairs; a lone surrogate is kept as is, like json.loads), numbers -> int when
+there is no fraction or exponent, else float, true/false/null -> True/False/None. Whitespace is
+space, tab, newline and carriage return only. Raise ValueError for anything json.loads rejects:
+trailing commas, leading zeros (01), a leading +, single quotes, unquoted keys, NaN/Infinity,
+raw control characters (below U+0020) inside strings, bad escapes, trailing text after the
+value, an empty document. It must handle 500 levels of nesting and a 2 MB document in a few
+seconds.
+""", """
+import json as _json, random, time
+docs = ['0', '-0', '12', '-3.5e+2', '1E3', '0.25', '"a\\\\"b\\\\\\\\c\\\\/d\\\\b\\\\f\\\\n\\\\r\\\\t"',
+        '"\\\\u00e9\\\\u20ac\\\\ud83d\\\\ude00"', '"\\\\ud800x"', '[]', '{}', ' [1, [2, [3]] ] ',
+        '{"a": 1, "a": 2}', '{"k": [true, false, null, {"x": ""}]}', '"\\u00e9 \\U0001f600"']
+for d in docs:
+    got, want = parse(d), _json.loads(d)
+    assert got == want and type(got) == type(want), (d, got, want)
+assert type(parse("1.0")) is float and type(parse("10")) is int
+bad = ['', ' ', '[1,]', '{"a":1,}', '01', '+1', "'a'", '{a:1}', 'NaN', 'Infinity', '-',
+       '1.', '.5', '1e', '"abc', '"a\\x01b"', '"\\\\x41"', '"\\\\u12"', '[1] x', 'tru', 'nul',
+       '[1 2]', '{"a" 1}', '{"a":}', '\\u00a0 1', '[', ']', '"\\\\ud83d\\\\u"']
+for d in bad:
+    try:
+        parse(d); raise AssertionError("no ValueError for " + repr(d))
+    except ValueError:
+        pass
+deep = "[" * 500 + "]" * 500
+assert parse(deep) == _json.loads(deep)
+rng = random.Random(9)
+def gen(d=0):
+    k = rng.random()
+    if d > 4 or k < 0.4:
+        return rng.choice([rng.randrange(-10**12, 10**12), rng.random() * 10**rng.randrange(-5, 5),
+                           True, False, None, "".join(rng.choice("ab\\"\\\\\\n\\u00e9\\U0001f600 /\\t") for _ in range(rng.randrange(6)))])
+    if k < 0.7:
+        return [gen(d + 1) for _ in range(rng.randrange(5))]
+    return {"".join(rng.choice("xyz\\"") for _ in range(rng.randrange(4))): gen(d + 1) for _ in range(rng.randrange(5))}
+for _ in range(400):
+    v = gen()
+    s = _json.dumps(v, ensure_ascii=rng.random() < 0.5, indent=rng.choice([None, 2]))
+    assert parse(s) == _json.loads(s), s
+big = _json.dumps([gen() for _ in range(6000)])
+assert len(big) > 300000
+big = big * 1 if len(big) > 2_000_000 else "[" + ",".join([big] * (2_000_000 // len(big) + 1)) + "]"
+t0 = time.time()
+assert parse(big) == _json.loads(big)
+assert time.time() - t0 < 15, "too slow"
+""", """
+def parse(text):
+    WS = " \\t\\n\\r"
+    n = len(text)
+    def ws(i):
+        while i < n and text[i] in WS:
+            i += 1
+        return i
+    def value(i, depth):
+        if i >= n:
+            raise ValueError("end")
+        c = text[i]
+        if c == "{":
+            obj = {}; i = ws(i + 1)
+            if i < n and text[i] == "}":
+                return obj, i + 1
+            while True:
+                if i >= n or text[i] != '"':
+                    raise ValueError("key")
+                k, i = string(i); i = ws(i)
+                if i >= n or text[i] != ":":
+                    raise ValueError(":")
+                v, i = value(ws(i + 1), depth + 1); obj[k] = v; i = ws(i)
+                if i < n and text[i] == ",":
+                    i = ws(i + 1); continue
+                if i < n and text[i] == "}":
+                    return obj, i + 1
+                raise ValueError("obj")
+        if c == "[":
+            arr = []; i = ws(i + 1)
+            if i < n and text[i] == "]":
+                return arr, i + 1
+            while True:
+                v, i = value(i, depth + 1); arr.append(v); i = ws(i)
+                if i < n and text[i] == ",":
+                    i = ws(i + 1); continue
+                if i < n and text[i] == "]":
+                    return arr, i + 1
+                raise ValueError("arr")
+        if c == '"':
+            return string(i)
+        for lit, val in (("true", True), ("false", False), ("null", None)):
+            if text.startswith(lit, i):
+                return val, i + len(lit)
+        return number(i)
+    def number(i):
+        j = i
+        if j < n and text[j] == "-":
+            j += 1
+        if j < n and text[j] == "0":
+            j += 1
+        elif j < n and "1" <= text[j] <= "9":
+            while j < n and text[j].isdigit() and text[j] in "0123456789":
+                j += 1
+        else:
+            raise ValueError("num")
+        isf = False
+        if j < n and text[j] == ".":
+            j += 1; isf = True
+            if not (j < n and text[j] in "0123456789"):
+                raise ValueError("frac")
+            while j < n and text[j] in "0123456789":
+                j += 1
+        if j < n and text[j] in "eE":
+            j += 1; isf = True
+            if j < n and text[j] in "+-":
+                j += 1
+            if not (j < n and text[j] in "0123456789"):
+                raise ValueError("exp")
+            while j < n and text[j] in "0123456789":
+                j += 1
+        s = text[i:j]
+        return (float(s) if isf else int(s)), j
+    ESC = {'"': '"', "\\\\": "\\\\", "/": "/", "b": "\\b", "f": "\\f", "n": "\\n", "r": "\\r", "t": "\\t"}
+    def hex4(i):
+        h = text[i:i + 4]
+        if len(h) != 4 or any(ch not in "0123456789abcdefABCDEF" for ch in h):
+            raise ValueError("u")
+        return int(h, 16)
+    def string(i):
+        i += 1; out = []
+        while True:
+            j = i
+            while j < n and text[j] != '"' and text[j] != "\\\\" and text[j] >= " ":
+                j += 1
+            out.append(text[i:j]); i = j
+            if i >= n:
+                raise ValueError("unterminated")
+            c = text[i]
+            if c == '"':
+                return "".join(out), i + 1
+            if c < " ":
+                raise ValueError("control")
+            i += 1
+            if i >= n:
+                raise ValueError("esc")
+            e = text[i]
+            if e in ESC:
+                out.append(ESC[e]); i += 1
+            elif e == "u":
+                cp = hex4(i + 1); i += 5
+                if 0xD800 <= cp < 0xDC00 and text.startswith("\\\\u", i):
+                    lo = hex4(i + 2)
+                    if 0xDC00 <= lo < 0xE000:
+                        cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00); i += 6
+                out.append(chr(cp))
+            else:
+                raise ValueError("bad escape")
+    v, i = value(ws(0), 0)
+    if ws(i) != n:
+        raise ValueError("trailing")
+    return v
+""", forbid=("json", "simplejson", "ast"))
+
+hard("mini_lisp", """
+Write a Python function `run(src)` that interprets a small Lisp and returns the value of the
+last top-level expression. Syntax: integers (possibly negative), symbols, `#t` and `#f`, lists
+in parentheses, `;` comments to the end of the line. Special forms: `(define name expr)`,
+`(define (f arg ...) body ...)`, `(lambda (arg ...) body ...)`, `(if c a b)` (only #f is
+false), `(let ((name expr) ...) body ...)`, `(begin expr ...)`, `(set! name expr)` (changes the
+nearest existing binding; NameError if there is none). Built-ins: `+ - *` (any number of
+arguments; `(- x)` negates), `quotient` (truncates toward zero), `remainder` (sign of the
+dividend), `= < > <= >=` (two arguments), `list`, `cons`, `car`, `cdr`, `null?`, `not`.
+Closures capture their defining environment (lexical scope). Calls in tail position must not
+grow the Python stack: a loop of 100000 tail calls must work. Results: integers as int, #t/#f
+as True/False, lists as Python lists, a procedure as any object. Errors: unbound symbol ->
+NameError; calling with the wrong number of arguments or calling a non-procedure ->
+TypeError; syntax errors (unbalanced parentheses, empty program) -> SyntaxError.
+""", """
+assert run("(+ 1 2 3)") == 6
+assert run("(- 5)") == -5 and run("(- 10 1 2)") == 7 and run("(*)") == 1
+assert run("(quotient -7 2)") == -3 and run("(remainder -7 2)") == -1
+assert run("(define x 4) (* x x)") == 16
+assert run("(if 0 1 2)") == 1 and run("(if #f 1 2)") == 2
+assert run("(define (fact n) (if (= n 0) 1 (* n (fact (- n 1))))) (fact 20)") == 2432902008176640000
+assert run("(let ((a 1) (b 2)) (+ a b))") == 3
+assert run("(define (adder n) (lambda (x) (+ x n))) ((adder 10) 5)") == 15
+assert run('''
+(define (make-counter)
+  (let ((n 0))
+    (lambda () (set! n (+ n 1)) n)))   ; closure with state
+(define c1 (make-counter))
+(define c2 (make-counter))
+(c1) (c1) (c2)
+(list (c1) (c2))''') == [3, 2]
+assert run("(define x 1) (define (f) x) (let ((x 2)) (f))") == 1, "lexical scope"
+assert run("(cons 1 (list 2 3))") == [1, 2, 3]
+assert run("(car (cdr (list 1 2 3)))") == 2
+assert run("(null? (cdr (list 1)))") is True and run("(not 0)") is False
+assert run('''
+(define (loop i acc) (if (= i 0) acc (loop (- i 1) (+ acc 1))))
+(loop 100000 0)''') == 100000
+assert run('''
+(define (even? n) (if (= n 0) #t (odd? (- n 1))))
+(define (odd? n) (if (= n 0) #f (even? (- n 1))))
+(even? 100001)''') is False
+assert run('''
+(define (count-down n) (begin (if (= n 0) 0 (count-down (- n 1)))))
+(count-down 100000)''') == 0
+assert run('''
+(define (map f xs) (if (null? xs) (list) (cons (f (car xs)) (map f (cdr xs)))))
+(map (lambda (x) (* x x)) (list 1 2 3 4))''') == [1, 4, 9, 16]
+for src, err in [("(undefined 1)", NameError), ("(set! nope 1)", NameError), ("((lambda (x) x))", TypeError),
+                 ("(1 2)", TypeError), ("(+ 1", SyntaxError), ("(+ 1))", SyntaxError), ("", SyntaxError),
+                 ("(define (f a b) a) (f 1)", TypeError)]:
+    try:
+        run(src); raise AssertionError("no " + err.__name__ + " for " + repr(src))
+    except err:
+        pass
+""", """
+def run(src):
+    import re
+    toks = re.findall(r"\\(|\\)|[^\\s()]+", re.sub(r";[^\\n]*", "", src))
+    pos = 0
+    def read():
+        nonlocal pos
+        if pos >= len(toks):
+            raise SyntaxError("eof")
+        t = toks[pos]; pos += 1
+        if t == "(":
+            out = []
+            while True:
+                if pos >= len(toks):
+                    raise SyntaxError("unbalanced")
+                if toks[pos] == ")":
+                    pos += 1; return out
+                out.append(read())
+        if t == ")":
+            raise SyntaxError("unexpected )")
+        if t == "#t":
+            return True
+        if t == "#f":
+            return False
+        try:
+            return int(t)
+        except ValueError:
+            return ("sym", t)
+    prog = []
+    while pos < len(toks):
+        prog.append(read())
+    if not prog:
+        raise SyntaxError("empty")
+    class Env:
+        def __init__(self, vars, outer):
+            self.vars, self.outer = vars, outer
+        def find(self, name):
+            e = self
+            while e is not None:
+                if name in e.vars:
+                    return e
+                e = e.outer
+            raise NameError(name)
+    class Proc:
+        def __init__(self, params, body, env):
+            self.params, self.body, self.env = params, body, env
+    def sub(*a):
+        return -a[0] if len(a) == 1 else a[0] - sum(a[1:])
+    def prod(*a):
+        r = 1
+        for x in a:
+            r *= x
+        return r
+    def quot(a, b):
+        q = abs(a) // abs(b)
+        return q if (a >= 0) == (b >= 0) else -q
+    def rem(a, b):
+        return a - b * quot(a, b)
+    def two(f):
+        def g(*a):
+            if len(a) != 2:
+                raise TypeError("arity")
+            return f(*a)
+        return g
+    def one(f):
+        def g(*a):
+            if len(a) != 1:
+                raise TypeError("arity")
+            return f(*a)
+        return g
+    glob = Env({"+": lambda *a: sum(a), "-": sub, "*": prod, "quotient": two(quot), "remainder": two(rem),
+                "=": two(lambda a, b: a == b), "<": two(lambda a, b: a < b), ">": two(lambda a, b: a > b),
+                "<=": two(lambda a, b: a <= b), ">=": two(lambda a, b: a >= b), "list": lambda *a: list(a),
+                "cons": two(lambda a, b: [a] + b), "car": one(lambda a: a[0]), "cdr": one(lambda a: a[1:]),
+                "null?": one(lambda a: a == []), "not": one(lambda a: a is False)}, None)
+    def name(x):
+        if not (isinstance(x, tuple) and x[0] == "sym"):
+            raise SyntaxError("expected a name")
+        return x[1]
+    def ev(x, env):
+        while True:
+            if isinstance(x, tuple):
+                return env.find(x[1]).vars[x[1]]
+            if not isinstance(x, list):
+                return x
+            if not x:
+                raise SyntaxError("empty call")
+            head = x[0]
+            op = head[1] if isinstance(head, tuple) else None
+            if op == "define" and (op not in env.vars or True) and not _shadowed(env, "define"):
+                if isinstance(x[1], list):
+                    env.vars[name(x[1][0])] = Proc([name(p) for p in x[1][1:]], x[2:], env)
+                else:
+                    env.vars[name(x[1])] = ev(x[2], env)
+                return None
+            if op == "lambda" and not _shadowed(env, op):
+                return Proc([name(p) for p in x[1]], x[2:], env)
+            if op == "if" and not _shadowed(env, op):
+                x = x[2] if ev(x[1], env) is not False else x[3]; continue
+            if op == "set!" and not _shadowed(env, op):
+                e = env.find(name(x[1])); e.vars[name(x[1])] = ev(x[2], env); return None
+            if op == "begin" and not _shadowed(env, op):
+                for y in x[1:-1]:
+                    ev(y, env)
+                x = x[-1]; continue
+            if op == "let" and not _shadowed(env, op):
+                env = Env({name(b[0]): ev(b[1], env) for b in x[1]}, env)
+                for y in x[2:-1]:
+                    ev(y, env)
+                x = x[-1]; continue
+            f = ev(head, env)
+            args = [ev(a, env) for a in x[1:]]
+            if isinstance(f, Proc):
+                if len(args) != len(f.params):
+                    raise TypeError("arity")
+                env = Env(dict(zip(f.params, args)), f.env)
+                for y in f.body[:-1]:
+                    ev(y, env)
+                x = f.body[-1]; continue
+            if callable(f):
+                return f(*args)
+            raise TypeError("not a procedure")
+    def _shadowed(env, op):
+        return False
+    result = None
+    for form in prog:
+        result = ev(form, glob)
+    return result
+""")
+
+hard("cron_next", """
+Write a Python function `next_run(expr, after)` for 5-field cron expressions
+("minute hour day-of-month month day-of-week") that returns the first datetime strictly after
+`after` (a naive datetime.datetime) at which the expression fires, with seconds and
+microseconds 0. Each field is `*` or a comma-separated list of items: `n`, `a-b`, `*/s` or
+`a-b/s` (step s from a), also `n/s` meaning n-max/s. Ranges: minute 0-59, hour 0-23,
+day-of-month 1-31, month 1-12 or JAN-DEC, day-of-week 0-7 or SUN-SAT (0 and 7 are both Sunday),
+names in any case. Like Vixie cron: if both day-of-month and day-of-week are restricted (not
+`*`), a day matches when either one matches; if one is `*`, only the other counts. Raise
+ValueError for invalid expressions (wrong field count, out-of-range values, a > b, step 0,
+unknown names) and if no time ever matches (like "0 0 30 2 *"). Must be fast: "0 0 29 2 *"
+(leap days) included, 300 calls in a few seconds.
+""", """
+import datetime as dt, random, time
+D = dt.datetime
+assert next_run("* * * * *", D(2026, 1, 1, 12, 0, 30)) == D(2026, 1, 1, 12, 1)
+assert next_run("0 * * * *", D(2026, 1, 1, 12, 0)) == D(2026, 1, 1, 13, 0)
+assert next_run("*/15 9-17 * * MON-FRI", D(2026, 10, 16, 17, 50)) == D(2026, 10, 19, 9, 0)
+assert next_run("30 4 1,15 * 5", D(2026, 10, 2, 0, 0)) == D(2026, 10, 2, 4, 30)
+assert next_run("30 4 1,15 * 5", D(2026, 10, 2, 5, 0)) == D(2026, 10, 9, 4, 30)
+assert next_run("0 0 29 2 *", D(2026, 3, 1)) == D(2028, 2, 29)
+assert next_run("0 0 31 * *", D(2026, 4, 1)) == D(2026, 5, 31)
+assert next_run("0 12 * jan,Jul sun", D(2026, 1, 5)) == D(2026, 1, 11, 12, 0)
+assert next_run("0 0 * * 7", D(2026, 10, 16)) == D(2026, 10, 18)
+assert next_run("5/20 * * * *", D(2026, 1, 1, 0, 26)) == D(2026, 1, 1, 0, 45)
+assert next_run("0 0 1-7 * 1", D(2026, 10, 2)) == D(2026, 10, 3), "dom OR dow"
+assert next_run("59 23 31 12 *", D(2026, 12, 31, 23, 59)) == D(2027, 12, 31, 23, 59)
+for bad in ["* * * *", "60 * * * *", "* 24 * * *", "* * 0 * *", "* * * 13 *", "* * * * 8",
+            "5-1 * * * *", "*/0 * * * *", "* * * FOO *", "0 0 30 2 *", "0 0 31 4,6 *", "a * * * *", "1,,2 * * * *"]:
+    try:
+        next_run(bad, D(2026, 1, 1)); raise AssertionError("no ValueError for " + repr(bad))
+    except ValueError:
+        pass
+def ref(expr, after):
+    mins, hours, doms, mons, dows = expr.split()
+    def items(f, lo, hi):
+        out = set()
+        for part in f.split(","):
+            rng_, _, step = part.partition("/")
+            a, b = (lo, hi) if rng_ == "*" else (int(rng_.split("-")[0]), int(rng_.split("-")[-1]) if "-" in rng_ else (hi if step else int(rng_)))
+            out |= set(range(a, b + 1, int(step) if step else 1))
+        return out
+    M, H, DM, MO, DW = items(mins, 0, 59), items(hours, 0, 23), items(doms, 1, 31), items(mons, 1, 12), {d % 7 for d in items(dows, 0, 7)}
+    t = after.replace(second=0, microsecond=0) + dt.timedelta(minutes=1)
+    day = t.date()
+    for _ in range(366 * 9):
+        dom_ok, dow_ok = day.day in DM, (day.isoweekday() % 7) in DW
+        ok = (dom_ok or dow_ok) if (doms != "*" and dows != "*") else (dom_ok and dow_ok)
+        if day.month in MO and ok:
+            for h in sorted(H):
+                for m in sorted(M):
+                    c = D(day.year, day.month, day.day, h, m)
+                    if c >= t:
+                        return c
+        day += dt.timedelta(days=1)
+        t = max(t, D(day.year, day.month, day.day))
+rng = random.Random(4)
+def field(lo, hi):
+    k = rng.random()
+    if k < 0.3: return "*"
+    if k < 0.5: return f"*/{rng.randrange(1, 8)}"
+    a = rng.randrange(lo, hi + 1); b = rng.randrange(a, hi + 1)
+    if k < 0.7: return f"{a}-{b}" + (f"/{rng.randrange(1, 4)}" if rng.random() < 0.4 else "")
+    return ",".join(str(rng.randrange(lo, hi + 1)) for _ in range(rng.randrange(1, 4)))
+t0 = time.time()
+for _ in range(300):
+    e = " ".join([field(0, 59), field(0, 23), field(1, 28), field(1, 12), field(0, 6)])
+    a = D(2026, 1, 1) + dt.timedelta(minutes=rng.randrange(0, 525600 * 3))
+    assert next_run(e, a) == ref(e, a), (e, a)
+assert time.time() - t0 < 10, "too slow"
+""", """
+def next_run(expr, after):
+    import datetime as dt, calendar
+    MON = {m: i for i, m in enumerate("JAN FEB MAR APR MAY JUN JUL AUG SEP OCT NOV DEC".split(), 1)}
+    DOW = {d: i for i, d in enumerate("SUN MON TUE WED THU FRI SAT".split())}
+    parts = expr.split()
+    if len(parts) != 5:
+        raise ValueError("fields")
+    def num(s, names):
+        if names and s.upper() in names:
+            return names[s.upper()]
+        if not s.isdigit():
+            raise ValueError(s)
+        return int(s)
+    def parse(f, lo, hi, names=None):
+        out = set()
+        for item in f.split(","):
+            if not item:
+                raise ValueError("empty")
+            r, slash, step = item.partition("/")
+            if slash:
+                if not step.isdigit() or int(step) == 0:
+                    raise ValueError("step")
+                step = int(step)
+            else:
+                step = 1
+            if r == "*":
+                a, b = lo, hi
+            elif "-" in r:
+                x, _, y = r.partition("-")
+                a, b = num(x, names), num(y, names)
+            else:
+                a = num(r, names); b = hi if slash else a
+            if not (lo <= a <= hi and lo <= b <= hi) or a > b:
+                raise ValueError("range")
+            out |= set(range(a, b + 1, step))
+        return out
+    M, H = parse(parts[0], 0, 59), parse(parts[1], 0, 23)
+    DM, MO = parse(parts[2], 1, 31), parse(parts[3], 1, 12, MON)
+    DW = {d % 7 for d in parse(parts[4], 0, 7, DOW)}
+    dom_star, dow_star = parts[2] == "*", parts[4] == "*"
+    if dow_star or not dom_star:
+        # dom must be possible in some month (if dow is *, only dom counts)
+        if dow_star and not any(d <= (29 if m == 2 else calendar.monthrange(2001, m)[1]) for m in MO for d in DM):
+            raise ValueError("never")
+    t = after.replace(second=0, microsecond=0) + dt.timedelta(minutes=1)
+    day = t.date()
+    for _ in range(366 * 9):
+        if day.month in MO:
+            dom_ok, dow_ok = day.day in DM, (day.isoweekday() % 7) in DW
+            ok = (dom_ok or dow_ok) if not dom_star and not dow_star else (dom_ok and dow_ok)
+            if ok:
+                for h in sorted(H):
+                    for m in sorted(M):
+                        c = dt.datetime(day.year, day.month, day.day, h, m)
+                        if c >= t:
+                            return c
+        day += dt.timedelta(days=1)
+    raise ValueError("never")
+""")
+
+hard("txn_store", """
+Write a Python class `Store` : an in-memory key-value store with nested transactions.
+Methods: `set(key, value)`, `get(key)` (None if missing), `delete(key)` (no error if missing),
+`count(value)` (how many keys currently have exactly this value), `begin()` (opens a
+transaction, nested inside any open one), `rollback()` (undoes everything since the innermost
+open begin() and closes it; RuntimeError if none is open), `commit()` (makes all changes of all
+open transactions permanent and closes them all; RuntimeError if none is open), and
+`snapshot()` (a dict of all current keys and values). Every method must be fast regardless of
+store size or how many transactions are open: count in O(1), rollback in time proportional to
+the changes it undoes, commit in O(1) or proportional to the changes. 200,000 operations with up
+to 1,000 nested transactions must take a few seconds.
+""", """
+s = Store()
+s.set("a", 10); s.set("b", 10)
+assert s.count(10) == 2 and s.count(20) == 0
+s.begin(); s.set("a", 20); assert s.get("a") == 20 and s.count(10) == 1
+s.begin(); s.delete("b"); assert s.get("b") is None and s.count(10) == 0
+s.rollback(); assert s.get("b") == 10 and s.count(10) == 1
+s.rollback(); assert s.get("a") == 10 and s.count(10) == 2
+for f in (s.rollback, s.commit):
+    try:
+        f(); raise AssertionError("no RuntimeError")
+    except RuntimeError:
+        pass
+s.begin(); s.set("c", 1); s.begin(); s.set("c", 2); s.set("d", 2); s.commit()
+assert s.snapshot() == {"a": 10, "b": 10, "c": 2, "d": 2} and s.count(2) == 2
+try:
+    s.rollback(); raise AssertionError("commit should close all")
+except RuntimeError:
+    pass
+s.begin(); s.set("x", 1); s.set("x", 2); s.delete("x"); s.set("x", 3); s.rollback()
+assert s.get("x") is None and "x" not in s.snapshot()
+s.begin(); s.delete("zzz"); s.rollback(); assert s.snapshot() == {"a": 10, "b": 10, "c": 2, "d": 2}
+s.set("n", None); assert s.count(None) == 1 and s.snapshot()["n"] is None
+s.begin(); s.delete("n"); s.rollback(); assert s.snapshot()["n"] is None and s.count(None) == 1
+import random, time
+rng = random.Random(1)
+t0 = time.time()
+big = Store(); model = {}; stack = []
+for i in range(200000):
+    k = rng.random()
+    key = rng.randrange(5000)
+    if k < 0.5:
+        v = rng.randrange(50); big.set(key, v)
+        if stack: stack[-1].append((key, model.get(key, KeyError)))
+        model[key] = v
+    elif k < 0.7:
+        big.delete(key)
+        if stack: stack[-1].append((key, model.get(key, KeyError)))
+        model.pop(key, None)
+    elif k < 0.85 and len(stack) < 1000:
+        big.begin(); stack.append([])
+    elif k < 0.95 and stack:
+        big.rollback()
+        for key2, old in reversed(stack.pop()):
+            if old is KeyError: model.pop(key2, None)
+            else: model[key2] = old
+    elif stack and k >= 0.995:
+        big.commit(); stack = []
+    if i % 20000 == 0:
+        v = rng.randrange(50)
+        assert big.count(v) == sum(1 for x in model.values() if x == v)
+assert big.snapshot() == model
+assert time.time() - t0 < 10, "too slow"
+# A big store: count, begin and rollback must not touch every key.
+huge = Store()
+for i in range(200000):
+    huge.set(i, i % 7)
+t0 = time.time()
+for i in range(100000):
+    assert huge.count(i % 7) > 0
+for i in range(5000):
+    huge.begin(); huge.set(i, -1); huge.rollback()
+assert huge.count(-1) == 0 and huge.get(3) == 3
+assert time.time() - t0 < 3, "count, begin or rollback is O(store size)"
+""", """
+class Store:
+    _MISSING = object()
+    def __init__(self):
+        self.data, self.counts, self.log = {}, {}, []
+    def _raw_set(self, key, value):
+        old = self.data.get(key, self._MISSING)
+        if old is not self._MISSING:
+            self.counts[self._k(old)] -= 1
+        if value is self._MISSING:
+            self.data.pop(key, None)
+        else:
+            self.data[key] = value
+            self.counts[self._k(value)] = self.counts.get(self._k(value), 0) + 1
+        return old
+    @staticmethod
+    def _k(v):
+        try:
+            hash(v); return (0, v)
+        except TypeError:
+            return (1, id(v))
+    def set(self, key, value):
+        old = self._raw_set(key, value)
+        if self.log:
+            self.log[-1].append((key, old))
+    def get(self, key):
+        return self.data.get(key)
+    def delete(self, key):
+        if key in self.data:
+            self.set(key, self._MISSING)
+    def count(self, value):
+        return self.counts.get(self._k(value), 0)
+    def begin(self):
+        self.log.append([])
+    def rollback(self):
+        if not self.log:
+            raise RuntimeError("no transaction")
+        for key, old in reversed(self.log.pop()):
+            self._raw_set(key, old)
+    def commit(self):
+        if not self.log:
+            raise RuntimeError("no transaction")
+        self.log = []
+    def snapshot(self):
+        return dict(self.data)
+""")

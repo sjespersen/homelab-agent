@@ -78,7 +78,8 @@ def cmd_run(args):
     os.makedirs(out, exist_ok=True)
     with open(os.path.join(out, "settings.json"), "w") as f:
         json.dump({k: v for k, v in vars(args).items() if k not in ("key", "func")}, f, indent=2)
-    tasks = [t for t in TASKS if not args.tasks or t["id"] in args.tasks.split(",")]
+    tasks = [t for t in TASKS if args.set in ("all", t.get("set", "basic"))
+             and (not args.tasks or t["id"] in args.tasks.split(","))]
     for run in range(1, args.runs + 1):
         for t in tasks:
             path = os.path.join(out, f"{t['id']}.{run}.json")
@@ -169,7 +170,9 @@ def main():
     r.add_argument("--model", default="default")
     r.add_argument("--key", default=os.environ.get("AI_API_KEY", ""))
     r.add_argument("--runs", type=int, default=3, help="tries per task (default 3)")
-    r.add_argument("--tasks", help="comma-separated task ids (default: all)")
+    r.add_argument("--set", default="basic", choices=["basic", "hard", "all"],
+                   help="basic: 12 shorter tasks (default); hard: 5 longer programs; all: both")
+    r.add_argument("--tasks", help="comma-separated task ids (default: all in the set)")
     r.add_argument("--effort", default="medium", help="reasoning_effort, or none to leave it out")
     r.add_argument("--temperature", type=float, default=0.6)
     r.add_argument("--top-p", type=float, default=0.95)
