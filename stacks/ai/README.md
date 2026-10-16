@@ -13,7 +13,8 @@ also suspend, restart or shut down the box.
 
 | Address (no Pi-hole) | With Pi-hole | What |
 |---|---|---|
-| `http://<name>.local:8005` | `ai.<DOMAIN>` | The switcher: what runs, GPU memory, buttons to switch |
+| `http://<name>.local` | `<name>.<DOMAIN>` | The Local AI page, which is the box's landing page with this module: GPU and RAM, the models and buttons to switch, links to the other services, the API, power and lighting (login: the API key) |
+| `http://<name>.local:8005` | `ai.<DOMAIN>` | The same page; the API lives here |
 | `http://<name>.local:8005/v1` | `ai.<DOMAIN>/v1` | OpenAI-compatible API of the chat models; it starts the one a request names (Strata also has `/v1/messages`) |
 | `http://<name>.local:8006` | `swarm.<DOMAIN>` | SwarmUI |
 | `http://<name>.local:8007` | `chat.<DOMAIN>` | Open WebUI: web chat for all models, downloads Ollama models |

@@ -298,6 +298,8 @@ services:
     environment:
       DOCKER_PROXY: ai-socket-proxy:2375
       STATE_FILE: /state/active
+      NAME: "${NAME}"   # the box's name, for the page
+      LINKS_FILE: /site/links.json   # the other services' links (install.sh), for the page
       IDLE_MINUTES: "${AI_IDLE_MINUTES}"   # stop the chat model after this long unused; 0: never
       LEDS: "${AI_LEDS}"   # yes: show the LED switch
       LEDS_EFFECT: "${AI_LEDS_ON_MODE}"   # defaults until changed on the page
@@ -307,6 +309,7 @@ services:
     volumes:
       - ./switcher:/app:ro
       - ./data/switcher:/state
+      - ../caddy/site:/site:ro
     networks: [default, docker-api]
     read_only: true
     cap_drop: [ALL]

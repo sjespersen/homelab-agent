@@ -6,11 +6,15 @@
 # Tailscale IP, the Tailscale name), so it needs no Pi-hole DNS. Sites with their own name
 # (pihole.<DOMAIN> ...) match first.
 :80 {
-	# Extras from the modules (Pi-hole's admin); install.sh writes this file.
+	# Extras from the modules (Pi-hole's admin; the ai module's page replaces the link page);
+	# install.sh writes this file. Modules use handle blocks: the first match wins, and the link
+	# page below is the fallback.
 	import landing.caddy
-	root * /srv
-	templates
-	file_server
+	handle {
+		root * /srv
+		templates
+		file_server
+	}
 }
 
 # One site per enabled module, at <name>.<DOMAIN> or at a port; install.sh writes this file.

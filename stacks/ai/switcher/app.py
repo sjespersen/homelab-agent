@@ -41,6 +41,9 @@ POWER_ACTIONS = ("suspend", "reboot", "poweroff")
 # The chat model last given the GPU, for API requests that name no model while none runs
 # (STATE says "none" after Stop or an idle stop).
 LAST_CHAT_FILE = os.path.join(os.path.dirname(STATE), "last-chat")
+# The page is also the box's landing page (port 80): its name, and the other services' links.
+NAME = os.environ.get("NAME", "")
+LINKS_FILE = os.environ.get("LINKS_FILE", "/site/links.json")
 
 LEDS_DEFAULTS = {"state": "", "effect": os.environ.get("LEDS_EFFECT", "Rainbow wave"),
                  "speed": os.environ.get("LEDS_SPEED", ""), "color": "FFFFFF"}
@@ -114,11 +117,29 @@ def services():
 def gpu():
     try:
         out = subprocess.run(
-            ["nvidia-smi", "--query-gpu=name,memory.used,memory.total,utilization.gpu,temperature.gpu",
+            ["nvidia-smi", "--query-gpu=name,memory.used,memory.total,utilization.gpu,temperature.gpu,power.draw",
              "--format=csv,noheader,nounits"], capture_output=True, text=True, timeout=10).stdout
-        name, used, total, util, temp = [x.strip() for x in out.splitlines()[0].split(",")]
-        return {"name": name, "used": int(used), "total": int(total), "util": int(util), "temp": int(temp)}
+        name, used, total, util, temp, power = [x.strip() for x in out.splitlines()[0].split(",")]
+        try:
+            power = round(float(power))
+        except ValueError:
+            power = None  # "[N/A]" on some cards
+        return {"name": name, "used": int(used), "total": int(total), "util": int(util), "temp": int(temp),
+                "power": power}
     except Exception:
+        return None
+
+
+def ram():
+    """The host's RAM in MiB (a container's /proc/meminfo is the host's): Strata locks ~50 GB."""
+    try:
+        info = {}
+        with open("/proc/meminfo") as f:
+            for line in f:
+                key, _, rest = line.partition(":")
+                info[key] = int(rest.split()[0]) // 1024
+        return {"total": info["MemTotal"], "used": info["MemTotal"] - info["MemAvailable"]}
+    except (OSError, KeyError, ValueError, IndexError):
         return None
 
 
@@ -472,7 +493,8 @@ class Handler(BaseHTTPRequestHandler):
         runs a model gives the GPU to Ollama first. No login: Caddy doesn't pass /ollama on, so
         only the stack's network (Open WebUI) and the host reach it, as they reach Ollama."""
         path = self.path[len("/ollama"):] or "/"
-        if not path.startswith("/"):
+        # Caddy blocks /ollama; anything it passes on anyway (it adds X-Forwarded-For) is refused.
+        if not path.startswith("/") or self.headers.get("X-Forwarded-For"):
             return self.send(404, "not found")
         body = self.read_body() if self.command in ("POST", "PUT", "PATCH", "DELETE") else b""
         if body is None:
@@ -565,6 +587,13 @@ class Handler(BaseHTTPRequestHandler):
             return self.send(302, headers=[("Location", "/_ai/login?next=/")])
         if url.path == "/":
             return self.send(200, PAGE, "text/html; charset=utf-8")
+        if url.path == "/_ai/api/links":
+            try:
+                with open(LINKS_FILE) as f:
+                    links = json.load(f)
+            except (OSError, ValueError):
+                links = []
+            return self.json({"name": NAME, "links": links})
         if url.path == "/_ai/api/status":
             try:
                 svcs = services()
@@ -573,7 +602,11 @@ class Handler(BaseHTTPRequestHandler):
             for s in svcs:
                 if s["always_on"] and s["state"] == "running":
                     s["loaded"] = ollama_loaded()
-            return self.json({"services": svcs, "gpu": gpu(), "switching": switching["to"],
+                    try:
+                        s["installed"] = len(ollama_call("GET", "/api/tags", timeout=5).get("models", []))
+                    except (OSError, ValueError):
+                        s["installed"] = None
+            return self.json({"services": svcs, "gpu": gpu(), "ram": ram(), "switching": switching["to"],
                               "error": switching["error"], "leds": leds(),
                               "idle_minutes": IDLE_MINUTES, "idle_stop": activity["idle_stop"]})
         self.send(404, "not found")
@@ -668,49 +701,100 @@ class Handler(BaseHTTPRequestHandler):
 
 
 STYLE = """
-:root { --bg:#f6f6f4; --card:#fff; --ink:#1d1d1b; --muted:#6b6b66; --line:#e2e2dd; --accent:#2f6f4f;
-  --warn:#9a6b00; --bad:#a33; color-scheme: light; }
-@media (prefers-color-scheme: dark) { :root { --bg:#151514; --card:#1f1f1d; --ink:#ecece8;
-  --muted:#9a9a93; --line:#33332f; --accent:#6fbf93; --warn:#e0b04a; --bad:#e07070; color-scheme: dark; } }
+:root { --bg:#f5f5f2; --card:#fff; --ink:#1c1c1a; --muted:#6b6b64; --faint:#9a9a92; --line:#e4e4de;
+  --soft:#efefea; --accent:#2f6f4f; --accent-soft:#e3efe8; --warn:#9a6b00; --warn-soft:#f7ecd2;
+  --bad:#b03a3a; --bad-soft:#f6e1e1; --on-accent:#fff; color-scheme: light; }
+@media (prefers-color-scheme: dark) { :root { --bg:#131312; --card:#1d1d1b; --ink:#ecece7; --muted:#a0a098;
+  --faint:#77776f; --line:#30302c; --soft:#262623; --accent:#72c296; --accent-soft:#1f3329; --warn:#e3b350;
+  --warn-soft:#3a2f17; --bad:#e57b7b; --bad-soft:#3b2020; --on-accent:#0f2419; color-scheme: dark; } }
 * { box-sizing: border-box; }
-body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.45 system-ui, sans-serif; }
-main { max-width: 760px; margin: 0 auto; padding: 24px 16px 48px; }
-h1 { font-size: 20px; margin: 0 0 4px; }
-.sub { color: var(--muted); margin: 0 0 20px; }
-.card { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:16px; margin-bottom:12px; }
-.row { display:flex; gap:12px; align-items:center; justify-content:space-between; flex-wrap:wrap; }
-.title { font-weight:600; }
-.about { color:var(--muted); font-size:13px; }
-.state { font-size:13px; }
-.on { color:var(--accent); } .busy { color:var(--warn); } .bad { color:var(--bad); } .off { color:var(--muted); }
-button, .btn { font:inherit; padding:7px 14px; border-radius:7px; border:1px solid var(--line);
-  background:var(--card); color:var(--ink); cursor:pointer; text-decoration:none; display:inline-block; }
-button.primary { background:var(--accent); border-color:var(--accent); color:#fff; }
-button:disabled { opacity:.5; cursor:default; }
-.bar { height:8px; background:var(--line); border-radius:4px; overflow:hidden; margin-top:8px; }
-.bar > div { height:100%; background:var(--accent); }
-.actions { display:flex; gap:8px; }
-code { font-size:13px; }
-input { font:inherit; padding:8px; width:100%; border:1px solid var(--line); border-radius:7px;
-  background:var(--bg); color:var(--ink); margin:8px 0 12px; }
-.err { color:var(--bad); }
+body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 960px; margin: 0 auto; padding: 20px 16px 56px; }
+a { color: inherit; }
+h1 { font-size: 22px; margin: 0; letter-spacing: -.01em; }
+h2 { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--muted);
+  margin: 32px 0 10px; }
+h3 { font-size: 16px; margin: 0; }
+.sub, .hint { color: var(--muted); font-size: 13px; margin: 2px 0 0; }
+.hint { margin: -4px 0 12px; }
+.top { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;
+  padding-bottom: 16px; border-bottom: 1px solid var(--line); }
+.brand { display:flex; align-items:center; gap:12px; }
+.logo { width:38px; height:38px; border-radius:10px; background:var(--accent); color:var(--on-accent); display:grid;
+  place-items:center; font-weight:700; font-size:18px; }
+.card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; }
+.grid { display:grid; gap:12px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr)); }
+.tiles { display:grid; gap:12px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); margin-top: 20px; }
+.tile { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px 14px; }
+.tile .label { font-size:12px; color:var(--muted); }
+.tile .value { font-size:22px; font-weight:600; margin-top:2px; font-variant-numeric: tabular-nums; }
+.tile .sub { font-size:12px; color:var(--faint); margin-top:4px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.meter { height:6px; background:var(--soft); border-radius:3px; overflow:hidden; margin-top:8px; }
+.meter > i { display:block; height:100%; background:var(--accent); border-radius:3px; transition: width .4s; }
+.meter.warn > i { background:var(--warn); } .meter.bad > i { background:var(--bad); }
+.group + .group { margin-top: 18px; }
+.group-title { font-size:14px; font-weight:600; margin: 0 0 2px; }
+.svc { display:flex; flex-direction:column; gap:10px; position:relative; }
+.svc.active { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
+.svc-head { display:flex; justify-content:space-between; align-items:flex-start; gap:10px; }
+.about { color:var(--muted); font-size:13px; margin:0; }
+.chips { display:flex; flex-wrap:wrap; gap:6px; }
+.chip { font-size:12px; padding:2px 8px; border-radius:999px; background:var(--soft); color:var(--muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.chip.plain { font-family: inherit; }
+.pill { display:inline-flex; align-items:center; gap:6px; font-size:12px; font-weight:500; padding:3px 9px;
+  border-radius:999px; white-space:nowrap; background:var(--soft); color:var(--muted); }
+.pill::before { content:""; width:7px; height:7px; border-radius:50%; background:currentColor; }
+.pill.on { background:var(--accent-soft); color:var(--accent); }
+.pill.busy { background:var(--warn-soft); color:var(--warn); }
+.pill.bad { background:var(--bad-soft); color:var(--bad); }
+.actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:auto; }
+button, .btn { font:inherit; font-size:14px; padding:7px 14px; border-radius:8px; border:1px solid var(--line);
+  background:var(--card); color:var(--ink); cursor:pointer; text-decoration:none; display:inline-flex;
+  align-items:center; gap:6px; }
+button:hover:not(:disabled), .btn:hover { border-color: var(--faint); }
+button.primary { background:var(--accent); border-color:var(--accent); color:var(--on-accent); font-weight:500; }
+button.small { font-size:13px; padding:4px 10px; }
+button:disabled { opacity:.45; cursor:default; }
 button.confirm { background:var(--bad); border-color:var(--bad); color:#fff; }
-.controls { display:flex; gap:12px 20px; flex-wrap:wrap; margin-top:14px; padding-top:12px;
-  border-top:1px solid var(--line); }
+.links { display:grid; gap:10px; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
+.link { display:block; text-decoration:none; background:var(--card); border:1px solid var(--line);
+  border-radius:12px; padding:12px 14px; }
+.link:hover { border-color: var(--faint); }
+.link .t { font-weight:600; } .link .d { color:var(--muted); font-size:13px; }
+.link .u { color:var(--faint); font-size:12px; margin-top:4px; }
+.kv { display:grid; grid-template-columns: 110px 1fr; gap:10px 16px; align-items:baseline; font-size:14px; }
+.kv > dt { color:var(--muted); font-size:13px; }
+.kv > dd { margin:0; min-width:0; }
+.copyrow { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+code { font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; background:var(--soft); padding:2px 6px;
+  border-radius:5px; overflow-wrap: anywhere; }
+.banner { background:var(--bad-soft); color:var(--bad); border-radius:10px; padding:10px 14px; margin-top:16px; font-size:14px; }
+.state { font-size:13px; color:var(--muted); }
+.state.on { color:var(--accent); } .state.busy { color:var(--warn); } .state.bad { color:var(--bad); }
+.controls { display:flex; gap:12px 20px; flex-wrap:wrap; margin-top:4px; padding-top:12px; border-top:1px solid var(--line); }
 .controls label { display:flex; gap:8px; align-items:center; font-size:13px; color:var(--muted); }
-.controls select { font:inherit; padding:6px 8px; border-radius:7px; border:1px solid var(--line);
+.controls select { font:inherit; font-size:13px; padding:5px 8px; border-radius:7px; border:1px solid var(--line);
   background:var(--bg); color:var(--ink); }
-.controls input[type=range] { width:140px; }
-.controls input[type=color] { width:44px; height:30px; padding:0 2px; margin:0; }
+.controls input[type=range] { width:130px; }
+.controls input[type=color] { width:40px; height:28px; padding:0 2px; border:1px solid var(--line); border-radius:6px; background:var(--bg); }
+.login { max-width: 380px; margin: 12vh auto 0; }
+.login input { font:inherit; padding:9px 10px; width:100%; border:1px solid var(--line); border-radius:8px;
+  background:var(--bg); color:var(--ink); margin:6px 0 14px; }
+.err { color:var(--bad); font-size:14px; }
+footer { margin-top: 36px; color: var(--faint); font-size: 12px; }
+@media (max-width: 560px) { .kv { grid-template-columns: 1fr; gap: 2px; } .kv > dd { margin-bottom: 10px; } }
 """
 
 LOGIN = """<!doctype html><html><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1"><title>Local AI login</title>
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>Sign in · Local AI</title>
 <style>""" + STYLE + """</style></head><body><main>
-<h1>Local AI</h1><p class="sub">Sign in with the AI API key (API_KEY in /opt/stacks/ai/data/.env on the server).</p>
-<form class="card" method="post" action="/_ai/login">
+<form class="card login" method="post" action="/_ai/login">
+<div class="brand" style="margin-bottom:14px"><span class="logo">AI</span><div><h1>Local AI</h1>
+<p class="sub">Sign in with the AI API key.</p></div></div>
 <p class="err" id="wrong" hidden>That key is wrong.</p>
-<label for="key">API key</label><input id="key" name="key" type="password" autocomplete="current-password" autofocus>
+<label for="key" class="state">API key (<code>API_KEY</code> in /opt/stacks/ai/data/.env on the server)</label>
+<input id="key" name="key" type="password" autocomplete="current-password" autofocus>
 <input type="hidden" name="next" id="next"><button class="primary">Sign in</button></form>
 <script>
 const q = new URLSearchParams(location.search);
@@ -721,75 +805,157 @@ document.getElementById('wrong').hidden = !q.get('wrong');
 PAGE = """<!doctype html><html><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1"><title>Local AI</title>
 <style>""" + STYLE + """</style></head><body><main>
-<div class="row"><div><h1>Local AI</h1><p class="sub">One service at a time has the GPU.</p></div>
-<a class="btn" href="/_ai/logout">Sign out</a></div>
-<div class="card" id="gpu">Loading…</div>
-<div id="services"></div>
-<div id="leds"></div>
-<div class="card"><div class="row"><div><div class="title">Power</div>
-<div class="about">The model is stopped before suspend and started again after waking.
-Wake it with <code>./ai-model.sh wake</code> (Wake-on-LAN) or the power button.</div>
-<div class="state" id="power-state"></div></div>
-<div class="actions"><button data-power="suspend" data-label="Suspend">Suspend</button>
-<button data-power="reboot" data-label="Restart">Restart</button>
-<button data-power="poweroff" data-label="Shut down">Shut down</button></div></div></div>
-<p class="err" id="error"></p>
-<div class="card"><div class="title">API</div>
-<div class="about">OpenAI-compatible base URL for the 27B and Strata: <code id="api"></code>,
-key as Bearer token. Strata also speaks Anthropic's <code>/v1/messages</code>.
-A request naming the other model (<code>qwen3.8-27b</code>, <code>qwen3.8-flash-next</code>) switches to it first.
-Web chat for all models: <a id="chat-link" href="#">Open WebUI</a>.</div>
-<div class="about" id="idle"></div></div>
+<header class="top">
+  <div class="brand"><span class="logo">AI</span>
+    <div><h1 id="name">Local AI</h1><div class="sub" id="holder">Loading…</div></div></div>
+  <a class="btn" href="/_ai/logout">Sign out</a>
+</header>
+<div class="banner" id="error" hidden></div>
+<div class="tiles" id="tiles"></div>
+
+<h2>Models</h2>
+<p class="hint">One service at a time has the GPU. Picking a model in the web chat or through the API
+switches to it by itself; the buttons here do it by hand.</p>
+<div id="groups"></div>
+
+<h2>Services</h2>
+<div class="links" id="links"></div>
+
+<h2>Connect</h2>
+<div class="card"><dl class="kv">
+  <dt>API base URL</dt><dd><div class="copyrow"><code id="api"></code>
+    <button class="small" id="copy-api">Copy</button></div></dd>
+  <dt>Key</dt><dd>The API key, as <code>Authorization: Bearer &lt;key&gt;</code> or <code>x-api-key</code>.</dd>
+  <dt>Models</dt><dd><div class="chips" id="api-models"></div>
+    <div class="state">OpenAI-compatible; Strata also speaks Anthropic's <code>/v1/messages</code>.
+    Naming a model in a request gives it the GPU first.</div></dd>
+  <dt>Idle</dt><dd class="state" id="idle"></dd>
+</dl></div>
+
+<h2>Box</h2>
+<div class="grid">
+  <div class="card svc"><div class="svc-head"><h3>Power</h3></div>
+    <p class="about">The model is stopped before suspend and started again after waking. Wake it with
+    <code>./ai-model.sh wake</code> (Wake-on-LAN) or the power button.</p>
+    <div class="state" id="power-state"></div>
+    <div class="actions"><button data-power="suspend" data-label="Suspend">Suspend</button>
+    <button data-power="reboot" data-label="Restart">Restart</button>
+    <button data-power="poweroff" data-label="Shut down">Shut down</button></div></div>
+  <div id="leds"></div>
+</div>
+<footer>Updates every 3 seconds.</footer>
 <script>
-const api = location.origin + '/v1';
-document.getElementById('api').textContent = api;
-document.getElementById('chat-link').href = siteUrl('chat');
-// The module's other sites: SwarmUI and the web chat, at the next ports with plain ports
-// (8006, 8007), or swarm.<domain> / chat.<domain> with Pi-hole names.
-function siteUrl(site) {
-  const offset = {swarm: 1, chat: 2}[site];
-  if (location.port) return location.protocol + '//' + location.hostname + ':' + (Number(location.port) + offset) + '/';
-  return location.protocol + '//' + location.hostname.replace(/^[^.]+/, site) + '/';
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let LINKS = [];
+// The services' links (install.sh writes them; {{.Host}} is the address this page was opened at).
+function siteLink(module, site) {
+  const l = LINKS.find(x => x.module === module && x.site === site);
+  return l ? l.url : '';
 }
+async function loadLinks() {
+  try {
+    const r = await fetch('/_ai/api/links');
+    if (!r.ok) return;
+    const d = await r.json();
+    if (d.name) { document.getElementById('name').textContent = d.name; document.title = d.name + ' · Local AI'; }
+    LINKS = (d.links || []).map(l => ({...l, url: l.url.replace('{{.Host}}', location.hostname)}));
+  } catch (e) { return; }
+  document.getElementById('links').innerHTML = LINKS.filter(l => !(l.module === 'ai' && l.site === 'main')).map(l =>
+    `<a class="link" href="${esc(l.url)}"><div class="t">${esc(l.title)}</div><div class="d">${esc(l.description)}</div>
+     <div class="u">${esc(l.url.replace(/^https?:\\/\\//, '').replace(/\\/$/, ''))}</div></a>`).join('')
+    || '<div class="state">No other services on this box.</div>';
+  const main = siteLink('ai', 'main');
+  document.getElementById('api').textContent = (main ? main.replace(/\\/$/, '') : location.origin) + '/v1';
+}
+document.getElementById('copy-api').onclick = e => copy(document.getElementById('api').textContent, e.target);
+async function copy(text, btn) {
+  try { await navigator.clipboard.writeText(text); }
+  catch (err) {  // plain http on the LAN has no clipboard API
+    const t = document.createElement('textarea'); t.value = text; document.body.append(t); t.select();
+    document.execCommand('copy'); t.remove();
+  }
+  btn.textContent = 'Copied'; setTimeout(() => btn.textContent = 'Copy', 1500);
+}
+const holds = s => s.always_on ? !!(s.loaded && s.loaded.length) : s.state === 'running';
+const shortName = m => String(m).split('/').pop();
 function stateText(s, switchingTo) {
   if (switchingTo === s.id) return ['busy', 'switching…'];
   if (switchingTo && s.always_on && s.loaded && s.loaded.length) return ['busy', 'unloading…'];
   if (switchingTo && s.state === 'running' && !s.always_on) return ['busy', 'stopping…'];
-  if (s.state !== 'running') return ['off', 'stopped'];
-  if (s.always_on) return s.loaded && s.loaded.length
-    ? ['on', 'has the GPU: ' + s.loaded.join(', ')]
-    : ['off', 'ready, no model loaded (a chat in Open WebUI loads one)'];
-  if (s.health === 'starting') return ['busy', 'starting (first start downloads the model)'];
-  if (s.health === 'unhealthy') return ['bad', 'running, not answering'];
-  return ['on', 'running'];
+  if (s.state !== 'running') return ['', 'stopped'];
+  if (s.always_on) return holds(s) ? ['on', 'has the GPU'] : ['', 'ready'];
+  if (s.health === 'starting') return ['busy', 'starting'];
+  if (s.health === 'unhealthy') return ['bad', 'not answering'];
+  return ['on', 'has the GPU'];
 }
+const GROUPS = [
+  ['Chat models', 'For the API (Hermes, scripts) and the web chat.', s => s.models && s.models.length],
+  ['Web chat models', 'Your Ollama models, in Open WebUI. Ollama runs all the time; a chat loads a model.', s => s.always_on],
+  ['Images', 'Image generation.', s => s.kind === 'image'],
+  ['Other', '', s => true],
+];
+function svcCard(s, busy, switchingTo) {
+  const [cls, text] = stateText(s, switchingTo);
+  const chips = [];
+  if (s.models && s.models.length) chips.push(`<span class="chip">${esc(s.models[0])}</span>`);
+  if (s.always_on) {
+    if (s.installed != null) chips.push(`<span class="chip plain">${s.installed} installed</span>`);
+    (s.loaded || []).forEach(m => chips.push(`<span class="chip" title="${esc(m)}">loaded: ${esc(shortName(m))}</span>`));
+  }
+  if (!s.always_on && s.health === 'starting') chips.push('<span class="chip plain">a first start downloads the model</span>');
+  const link = s.site ? siteLink('ai', s.site) : '';
+  const open = link && s.state === 'running' ? `<a class="btn" href="${esc(link)}">Open</a>` : '';
+  const btn = holds(s)
+    ? `<button ${busy ? 'disabled' : ''} onclick="go('none')">${s.always_on ? 'Unload' : 'Stop'}</button>`
+    : `<button class="primary" ${busy ? 'disabled' : ''} onclick="go('${esc(s.id)}')">Switch to this</button>`;
+  return `<div class="card svc ${holds(s) ? 'active' : ''}">
+    <div class="svc-head"><h3>${esc(s.title)}</h3><span class="pill ${cls}">${text}</span></div>
+    <p class="about">${esc(s.about)}</p>
+    ${chips.length ? `<div class="chips">${chips.join('')}</div>` : ''}
+    <div class="actions">${open}${btn}</div></div>`;
+}
+function tile(label, value, sub, pct, level) {
+  const meter = pct == null ? '' : `<div class="meter ${level || ''}"><i style="width:${Math.max(0, Math.min(100, pct))}%"></i></div>`;
+  return `<div class="tile"><div class="label">${label}</div><div class="value">${value}</div>${meter}<div class="sub">${sub}</div></div>`;
+}
+const gb = mib => (mib / 1024).toFixed(1);
 async function load() {
   let r;
   try { r = await fetch('/_ai/api/status'); } catch (e) { return; }
   if (r.status === 401) { location.href = '/_ai/login?next=/'; return; }
   const d = await r.json();
-  const g = d.gpu;
-  document.getElementById('gpu').innerHTML = g
-    ? `<div class="row"><span class="title">${g.name}</span><span class="state">${(g.used/1024).toFixed(1)} of ${(g.total/1024).toFixed(1)} GB · ${g.util}% busy · ${g.temp} °C</span></div>
-       <div class="bar"><div style="width:${Math.round(100*g.used/g.total)}%"></div></div>`
-    : 'GPU status unavailable';
-  const busy = !!d.switching;
-  document.getElementById('services').innerHTML = (d.services || []).map(s => {
-    const [cls, text] = stateText(s, d.switching);
-    // Ollama runs all the time; it only holds the GPU while a model is loaded.
-    const running = s.always_on ? !!(s.loaded && s.loaded.length) : s.state === 'running';
-    const open = s.site && s.state === 'running' ? `<a class="btn" href="${siteUrl(s.site)}">Open</a>` : '';
-    const btn = running
-      ? `<button ${busy ? 'disabled' : ''} onclick="go('none')">Stop</button>`
-      : `<button class="primary" ${busy ? 'disabled' : ''} onclick="go('${s.id}')">Switch to this</button>`;
-    return `<div class="card"><div class="row"><div><div class="title">${s.title}</div>
-      <div class="about">${s.about}</div><div class="state ${cls}">${text}</div></div>
-      <div class="actions">${open}${btn}</div></div></div>`;
+  const g = d.gpu, m = d.ram, t = [];
+  if (g) {
+    const memPct = 100 * g.used / g.total;
+    t.push(tile('GPU memory', gb(g.used) + ' GB', 'of ' + gb(g.total) + ' GB', memPct, memPct > 95 ? 'warn' : ''));
+    t.push(tile('GPU load', g.util + '%', esc(g.name.replace(/^NVIDIA (GeForce )?/, '')), g.util));
+    t.push(tile('GPU temperature', g.temp + ' °C', g.temp >= 83 ? 'hot' : 'normal', 100 * g.temp / 90, g.temp >= 83 ? 'bad' : g.temp >= 75 ? 'warn' : ''));
+    if (g.power != null) t.push(tile('GPU power', g.power + ' W', 'right now', null));
+  } else t.push(tile('GPU', '–', 'status unavailable', null));
+  if (m) { const p = 100 * m.used / m.total;
+    t.push(tile('RAM', gb(m.used) + ' GB', 'of ' + gb(m.total) + ' GB', p, p > 92 ? 'bad' : p > 80 ? 'warn' : '')); }
+  document.getElementById('tiles').innerHTML = t.join('');
+  const svcs = d.services || [], busy = !!d.switching;
+  const holder = svcs.find(holds), target = svcs.find(s => s.id === d.switching);
+  document.getElementById('holder').innerHTML = d.switching
+    ? `<span class="state busy">Switching to ${esc(target ? target.title : d.switching)}…</span>`
+    : holder ? `<span class="state on">● ${esc(holder.title)}${holder.always_on ? ' (' + esc(shortName(holder.loaded[0])) + ')' : ''} has the GPU</span>`
+    : 'The GPU is free';
+  const used = new Set();
+  document.getElementById('groups').innerHTML = GROUPS.map(([title, note, match]) => {
+    const list = svcs.filter(s => !used.has(s.id) && match(s));
+    list.forEach(s => used.add(s.id));
+    return list.length ? `<div class="group"><div class="group-title">${title}</div>${note ? `<p class="hint" style="margin:0 0 8px">${note}</p>` : ''}
+      <div class="grid">${list.map(s => svcCard(s, busy, d.switching)).join('')}</div></div>` : '';
   }).join('');
-  document.getElementById('error').textContent = d.error || '';
+  document.getElementById('api-models').innerHTML = svcs.filter(s => s.models && s.models.length)
+    .map(s => `<span class="chip">${esc(s.models[0])}</span>`).join('');
+  const err = document.getElementById('error');
+  err.textContent = d.error || ''; err.hidden = !d.error;
   const idle = d.idle_stop;
   document.getElementById('idle').textContent = (d.idle_minutes
-    ? `The chat model stops after ${d.idle_minutes} min without requests; the next request starts it again.` : '')
+    ? `The chat model stops after ${d.idle_minutes} min without requests; the next request starts it again (1-2 min).`
+    : 'Chat models stay loaded until you stop them.')
     + (idle ? ` Last stopped when idle: ${idle.service}, ${new Date(idle.at * 1000).toLocaleString()}.` : '');
   renderLeds(d.leds);
 }
@@ -798,14 +964,14 @@ function renderLeds(l) {
   const box = document.getElementById('leds');
   if (!l) { box.innerHTML = ''; return; }
   if (!box.firstChild) {
-    box.innerHTML = `<div class="card"><div class="row"><div><div class="title">Case lighting</div>
-      <div class="about" id="leds-devs"></div><div class="state" id="leds-state"></div></div>
-      <div class="actions"><button id="leds-off">Off</button><button id="leds-on">On</button></div></div>
+    box.innerHTML = `<div class="card svc"><div class="svc-head"><h3>Case lighting</h3><span class="pill" id="leds-state"></span></div>
+      <p class="about" id="leds-devs"></p>
       <div class="controls">
         <label>Effect <select id="leds-effect"></select></label>
         <label>Speed <span>slow</span><input type="range" id="leds-speed" min="0" max="100" step="5"><span>fast</span></label>
         <label>Color <input type="color" id="leds-color"></label>
-      </div></div>`;
+      </div>
+      <div class="actions"><button id="leds-off">Off</button><button id="leds-on">On</button></div></div>`;
     document.getElementById('leds-off').onclick = () => setLeds({state: 'off'});
     document.getElementById('leds-on').onclick = () => setLeds({state: 'on'});
     document.getElementById('leds-effect').onchange = e => setLeds({state: 'on', effect: e.target.value});
@@ -816,8 +982,8 @@ function renderLeds(l) {
   document.getElementById('leds-devs').textContent =
     l.devices.map(x => x.name).join(' · ') || 'RGB on the board headers, through OpenRGB';
   const st = document.getElementById('leds-state');
-  st.textContent = !s.state ? 'not set yet' : (l.applied ? (on ? 'on' : 'off') : 'applying… (about 20 s)');
-  st.className = 'state ' + (l.applied ? (on ? 'on' : 'off') : 'busy');
+  st.textContent = !s.state ? 'not set' : (l.applied ? (on ? 'on' : 'off') : 'applying…');
+  st.className = 'pill ' + (l.applied ? (on ? 'on' : '') : 'busy');
   document.getElementById('leds-off').disabled = s.state === 'off';
   document.getElementById('leds-on').disabled = on;
   const sel = document.getElementById('leds-effect');
@@ -834,10 +1000,11 @@ function renderLeds(l) {
   const color = document.getElementById('leds-color');
   if (active !== color) color.value = '#' + (s.color || 'FFFFFF').toLowerCase();
 }
+function showError(text) { const e = document.getElementById('error'); e.textContent = text; e.hidden = !text; }
 async function setLeds(change) {
   const r = await fetch('/_ai/api/leds', {method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify(change)});
-  if (!r.ok) document.getElementById('error').textContent = (await r.json()).error;
+  if (!r.ok) showError((await r.json()).error);
   load();
 }
 // Power buttons confirm with a second click on the button itself (no browser dialog, which a
@@ -877,10 +1044,10 @@ async function power(b) {
 async function go(id) {
   const r = await fetch('/_ai/api/switch', {method: 'POST', headers: {'Content-Type': 'application/json'},
     body: JSON.stringify({service: id})});
-  if (!r.ok) document.getElementById('error').textContent = (await r.json()).error;
+  if (!r.ok) showError((await r.json()).error);
   load();
 }
-load(); setInterval(load, 3000);
+loadLinks().then(load); setInterval(load, 3000);
 </script></main></body></html>"""
 
 if __name__ == "__main__":

@@ -35,6 +35,9 @@ names="$NAME.$DOMAIN"
 sites=""
 landing=""
 links=""
+# The same links as JSON, for pages that draw their own list (the ai module's Local AI page).
+json_str() { local s=${1//\\/\\\\}; s=${s//\"/\\\"}; printf '"%s"' "$s"; }
+links_json=""
 if has_module pihole; then
   links+="  <p>*.$DOMAIN names need Pi-hole as DNS (Tailscale on).</p>"$'\n'
 fi
@@ -55,6 +58,7 @@ for m in "${modules[@]}"; do
     sites+="$address {"$'\n'"$(sed 's/^/\t/' "$repo/stacks/$m/$file")"$'\n}\n\n'
     link=$(module_site_var "$m" "$site" LINK)
     links+="  <a href=\"${link:-$url}\">$(module_site_var "$m" "$site" TITLE) <span>— $(module_site_var "$m" "$site" DESCRIPTION)</span></a>"$'\n'
+    links_json+="${links_json:+,}"$'\n'"  {\"module\": $(json_str "$m"), \"site\": $(json_str "$site"), \"title\": $(json_str "$(module_site_var "$m" "$site" TITLE)"), \"description\": $(json_str "$(module_site_var "$m" "$site" DESCRIPTION)"), \"url\": $(json_str "${link:-$url}")}"
   done < <(module_sites "$m")
 done
 
@@ -103,6 +107,8 @@ printf '%s' "$landing" >"$caddy/conf/landing.caddy"
 mkdir -p "$caddy/site"
 LINKS=$links awk '/<!-- LINKS/ { printf "%s", ENVIRON["LINKS"]; next } { print }' \
   "$repo/stacks/caddy/landing.html" >"$caddy/site/index.html"
+# {{.Host}} in a URL: the address the page was opened at (the page fills it in).
+printf '[%s\n]\n' "$links_json" >"$caddy/site/links.json"
 
 [[ -z $render_only ]] || exit 0
 

@@ -17,7 +17,7 @@ Every service except Caddy is optional (see [Modules](#modules)):
 | [Uptime Kuma](https://github.com/louislam/uptime-kuma) | `status.home.arpa` | Uptime checks and alerts |
 | [Beszel](https://beszel.dev) | `server.home.arpa` | CPU, RAM, disk, temperatures, fans, per-container stats |
 | Local AI ([llama.cpp](https://github.com/ggml-org/llama.cpp), [Strata](https://github.com/Niko1221/Strata), [SwarmUI](https://github.com/mcmonkeyprojects/SwarmUI), [Open WebUI](https://github.com/open-webui/open-webui), [Ollama](https://github.com/ollama/ollama)) | `ai.home.arpa`, `<server>:8005`; `swarm.home.arpa`, `<server>:8006`; `chat.home.arpa`, `<server>:8007` | Qwen3.8-27B, Qwen3.8-Flash-Next or image generation on an NVIDIA GPU, a page to switch, OpenAI-compatible API. Opt-in |
-| [Caddy](https://caddyserver.com) | port 80 | Gives every service a name; landing page at `http://<name>.local` |
+| [Caddy](https://caddyserver.com) | port 80 | Gives every service a name; landing page at `http://<name>.local` (with the ai module: the Local AI page, which links to the rest) |
 | [Tailscale](https://tailscale.com) | — | Reach everything from anywhere, no open ports |
 | [restic](https://restic.net) | — | Nightly encrypted backups, pulled to your Mac |
 

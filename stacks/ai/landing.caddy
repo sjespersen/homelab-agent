@@ -1,0 +1,9 @@
+# With the ai module, the landing page is the Local AI page: it shows the GPU and the models,
+# and links to the other services (links.json, which install.sh writes).
+# /ollama (Ollama's API, no login) is only for Open WebUI on the stack's network.
+handle /ollama* {
+	respond "not found" 404
+}
+handle {
+	reverse_proxy 127.0.0.1:8079
+}
