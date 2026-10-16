@@ -30,11 +30,27 @@ is rebuilt from the repo plus the latest backup.
 
 ## What you need
 
-- Any x86-64 PC with 8 GB RAM and an SSD. Tested on Ubuntu Server 26.04.
+Two tracks: start with the agent box; the AI box is optional and can come later (or run on
+its own).
+
+**The agent box** (Hermes, n8n, Pi-hole, monitoring, backups):
+
+- Any x86-64 PC with 8 GB RAM and an SSD, like the €70 Shuttle. Tested on Ubuntu Server 26.04.
+- An LLM provider account for Hermes (OpenAI, Anthropic, OpenRouter, ...), or the AI box.
+
+**The AI box** (local models; the [ai module](stacks/ai/README.md)):
+
+- An x86-64 PC with an NVIDIA GPU: 16 GB VRAM for Qwen3.8-27B, 12 GB+ for Qwen3.8-Flash-Next
+  on Strata, 8 GB+ for image generation. The reference box has an RTX 5060 Ti 16 GB.
+- 32 GB RAM or more; 64 GB for every Strata quant (it keeps the experts in RAM).
+- An NVMe disk for the models: about 100 GB for both chat models, plus your image models.
+- Ubuntu 26.04 (desktop or server); `setup.sh` installs the NVIDIA driver.
+
+**For both:**
+
 - A computer to set it up from (macOS or Linux), or a keyboard and screen on the server itself.
   The backup pull in `mac/` is macOS-only.
 - A free [Tailscale](https://tailscale.com) account.
-- An LLM provider account for Hermes.
 
 ## Set up
 
