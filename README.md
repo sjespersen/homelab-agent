@@ -44,7 +44,7 @@ its own).
   on Strata, 8 GB+ for image generation. The reference box has an RTX 5060 Ti 16 GB.
 - 32 GB RAM or more; 64 GB for every Strata quant (it keeps the experts in RAM).
 - An NVMe disk for the models: about 100 GB for both chat models, plus your image models.
-- Ubuntu 26.04 (desktop or server); `setup.sh` installs the NVIDIA driver.
+- Ubuntu 26.04, as for the agent box; `setup.sh` installs the NVIDIA driver.
 
 **For both:**
 
