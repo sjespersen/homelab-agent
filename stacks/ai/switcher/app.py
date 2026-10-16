@@ -764,12 +764,12 @@ STYLE = """
   --soft:#efefea; --accent:#2f6f4f; --accent-soft:#e3efe8; --warn:#a36f00; --warn-soft:#f7ecd2;
   --bad:#b03a3a; --bad-soft:#f6e1e1; --on-accent:#fff;
   --chat:#2f6f4f; --chat-soft:#e3efe8; --web:#2f62a3; --web-soft:#e2eaf6; --image:#7b4bb0; --image-soft:#eee5f7;
-  --cpu:#2f62a3; --rest:#c9c9c1; color-scheme: light; }
+  --cpu:#2f62a3; --rest:#c9c9c1; --orange:#b8621b; --red:#b33f4a; --pink:#b0407e; --teal:#1d7f80; color-scheme: light; }
 @media (prefers-color-scheme: dark) { :root { --bg:#121211; --card:#1b1b19; --ink:#ecece7; --muted:#a0a098;
   --faint:#77776f; --line:#2e2e2a; --soft:#262623; --accent:#72c296; --accent-soft:#1d3127; --warn:#e3b350;
   --warn-soft:#3a2f17; --bad:#e57b7b; --bad-soft:#3b2020; --on-accent:#0f2419;
   --chat:#72c296; --chat-soft:#1d3127; --web:#7fa9e6; --web-soft:#1c2a3e; --image:#bd96ea; --image-soft:#2d2240;
-  --cpu:#7fa9e6; --rest:#4a4a44; color-scheme: dark; } }
+  --cpu:#7fa9e6; --rest:#4a4a44; --orange:#eb9a55; --red:#ec7f88; --pink:#e886bf; --teal:#5cc4c4; color-scheme: dark; } }
 * { box-sizing: border-box; }
 body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
 main { max-width: 1100px; margin: 0 auto; padding: 14px 16px 28px; }
@@ -783,8 +783,8 @@ small { font-size: .62em; font-weight: 500; color: var(--muted); }
 .top { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom: 12px; }
 .top-right { display:flex; align-items:center; gap:12px; }
 .brand { display:flex; align-items:center; gap:10px; }
-.logo { width:32px; height:32px; border-radius:9px; background:var(--accent); color:var(--on-accent); display:grid;
-  place-items:center; font-weight:700; font-size:14px; }
+.logo { width:32px; height:32px; border-radius:9px; background:#2f6f4f; display:grid; place-items:center; flex-shrink:0; }
+.logo svg { width:26px; height:26px; }
 .live { display:inline-flex; align-items:center; gap:6px; font-size:12px; color:var(--muted); }
 .live i { width:7px; height:7px; border-radius:50%; background:var(--accent); }
 .live.blink i { animation: blink .6s ease-out; }
@@ -909,15 +909,25 @@ button.small { font-size:12px; padding:3px 9px; }
 button:disabled { opacity:.45; cursor:default; }
 button.confirm { background:var(--bad); border-color:var(--bad); color:#fff; }
 .actions { display:flex; gap:6px; flex-wrap:wrap; }
-.linklist { display:grid; gap:6px; }
-.link { display:flex; align-items:center; gap:10px; text-decoration:none; padding:7px 10px;
-  border:1px solid var(--line); border-radius:9px; }
-.link:hover { border-color: var(--faint); }
+.power { display:inline-flex; }
+.power button { border-radius:0; margin-left:-1px; padding:5px 10px; color:var(--muted); }
+.power button:first-child { border-radius:7px 0 0 7px; margin-left:0; }
+.power button:last-child { border-radius:0 7px 7px 0; }
+.power button:hover:not(:disabled) { color:var(--ink); position:relative; }
+.power button.confirm { color:#fff; position:relative; }
+.power .ic { width:15px; height:15px; }
+.linklist { display:grid; gap:8px; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
+.link { display:flex; align-items:center; gap:11px; text-decoration:none; padding:9px 11px;
+  border:1px solid var(--line); border-radius:10px; min-width:0; transition: border-color .15s, background .15s; }
+.link:hover { border-color: color-mix(in srgb, var(--c) 55%, transparent); background: color-mix(in srgb, var(--c) 5%, transparent); }
 .link > div { flex:1; min-width:0; }
-.link .t { font-weight:600; } .link .d { color:var(--muted); font-size:12px; }
-.link .u { color:var(--faint); font-size:11px; white-space:nowrap; font-variant-numeric: tabular-nums; }
-.link .arrow { color:var(--faint); }
-.link:hover .arrow { color:var(--ink); }
+.sicon { width:36px; height:36px; border-radius:10px; display:grid; place-items:center; flex-shrink:0;
+  color:var(--c); background: color-mix(in srgb, var(--c) 14%, transparent); }
+.sicon .ic { width:19px; height:19px; }
+.link .t { font-weight:600; display:flex; justify-content:space-between; gap:8px; align-items:baseline; }
+.link .d { color:var(--muted); font-size:12px; line-height:1.35; overflow:hidden; display:-webkit-box;
+  -webkit-line-clamp:2; -webkit-box-orient:vertical; }
+.link .u { color:var(--faint); font-size:11px; font-weight:400; white-space:nowrap; font-variant-numeric: tabular-nums; }
 .kv { display:grid; grid-template-columns: 92px 1fr; gap:6px 12px; align-items:baseline; margin:0; }
 .kv > dt { color:var(--muted); font-size:12px; }
 .kv > dd { margin:0; min-width:0; font-size:13px; }
@@ -941,14 +951,23 @@ code { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; background:var
 footer { margin-top: 14px; color: var(--faint); font-size: 11px; }
 @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
 @media (max-width: 560px) { .kv { grid-template-columns: 1fr; gap: 1px; } .kv > dd { margin-bottom: 8px; }
+  .power button:not(.confirm) span { display:none; } .live span { display:none; }
   .now { flex-wrap: wrap; } .now-actions { width: 100%; } .now-title { font-size: 18px; } }
 """
 
+# The mark: a chip on green, for the favicon and the header logo (the page adds a status dot).
+CHIP = ("<rect x='9' y='9' width='14' height='14' rx='2.5' fill='none' stroke='white' stroke-width='2.2'/>"
+        "<path d='M13 4.5v4.5M19 4.5v4.5M13 23v4.5M19 23v4.5M4.5 13h4.5M4.5 19h4.5M23 13h4.5M23 19h4.5'"
+        " stroke='white' stroke-width='2.2' stroke-linecap='round'/><circle cx='16' cy='16' r='2.6' fill='white'/>")
+FAVICON = ("<link rel='icon' id='favicon' href=\"data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg'"
+           " viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%232f6f4f'/>" + CHIP + "</svg>\">")
+LOGO = ("<span class='logo'><svg viewBox='0 0 32 32' aria-hidden='true'>" + CHIP + "</svg></span>")
+
 LOGIN = """<!doctype html><html><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1"><title>Sign in · Local AI</title>
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>Sign in · Local AI</title>""" + FAVICON + """
 <style>""" + STYLE + """</style></head><body><main>
 <form class="card login" method="post" action="/_ai/login">
-<div class="brand" style="margin-bottom:14px"><span class="logo">AI</span><div><h1>Local AI</h1>
+<div class="brand" style="margin-bottom:14px">""" + LOGO + """<div><h1>Local AI</h1>
 <p class="sub">Sign in with the AI API key.</p></div></div>
 <p class="err" id="wrong" hidden>That key is wrong.</p>
 <label for="key" class="state">API key (<code>API_KEY</code> in /opt/stacks/ai/data/.env on the server)</label>
@@ -961,12 +980,17 @@ document.getElementById('wrong').hidden = !q.get('wrong');
 </script></main></body></html>"""
 
 PAGE = """<!doctype html><html><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1"><title>Local AI</title>
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>Local AI</title>""" + FAVICON + """
 <style>""" + STYLE + """</style></head><body><main>
 <header class="top">
-  <div class="brand"><span class="logo">AI</span>
+  <div class="brand">""" + LOGO + """
     <div><h1 id="name">Local AI</h1><div class="sub" id="holder">Loading…</div></div></div>
-  <div class="top-right"><span class="live" id="live" title="The page asks the box every 3 seconds"><i></i><span>live</span></span>
+  <div class="top-right"><span class="state" id="power-state"></span>
+    <span class="live" id="live" title="The page asks the box every 3 seconds"><i></i><span>live</span></span>
+    <div class="power" title="The model stops before suspend and starts again after waking. Wake with ./ai-model.sh wake or the power button.">
+      <button data-power="suspend" data-label="Suspend" data-icon="moon" aria-label="Suspend"><span>Suspend</span></button>
+      <button data-power="reboot" data-label="Restart" data-icon="restart" aria-label="Restart"><span>Restart</span></button>
+      <button data-power="poweroff" data-label="Shut down" data-icon="power" aria-label="Shut down"><span>Shut down</span></button></div>
     <a class="btn" href="/_ai/logout">Sign out</a></div>
 </header>
 <div class="banner" id="error" hidden></div>
@@ -977,6 +1001,7 @@ PAGE = """<!doctype html><html><head><meta charset="utf-8">
       <div id="now"></div>
       <div class="choices" id="choices"></div>
     </section>
+    <section class="card" data-o="3"><div class="card-head"><h2>Services</h2></div><div class="linklist" id="links"></div></section>
     <section class="card" data-o="5">
       <div class="card-head"><h2>Connect</h2></div>
       <dl class="kv">
@@ -988,17 +1013,10 @@ PAGE = """<!doctype html><html><head><meta charset="utf-8">
         <dt>Idle</dt><dd class="state" id="idle"></dd>
       </dl>
     </section>
-    <section class="card" data-o="3"><div class="card-head"><h2>Services</h2></div><div class="linklist" id="links"></div></section>
   </div>
   <div class="col">
     <section class="card" data-o="2"><div class="card-head"><h2>Box</h2><span class="hint">graphs: last 3 minutes</span></div>
       <div id="vitals"></div></section>
-    <section class="card" data-o="4"><div class="card-head"><h2>Power</h2><span class="state" id="power-state"></span></div>
-      <p class="about">The model stops before suspend and starts again after waking. Wake with
-      <code>./ai-model.sh wake</code> or the power button.</p>
-      <div class="actions"><button data-power="suspend" data-label="Suspend">Suspend</button>
-      <button data-power="reboot" data-label="Restart">Restart</button>
-      <button data-power="poweroff" data-label="Shut down">Shut down</button></div></section>
     <div id="leds" data-o="6"></div>
   </div>
 </div>
@@ -1015,6 +1033,21 @@ const ICONS = {
   bolt: '<path d="M13 2L4.5 13.5H11l-1 8.5 8.5-11.5H12z"/>',
   idle: '<rect x="2.5" y="6" width="19" height="11" rx="2" stroke-dasharray="3 2.5"/>',
   arrow: '<path d="M7 17L17 7M9 7h8v8"/>',
+  moon: '<path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/>',
+  restart: '<path d="M4 12a8 8 0 1 0 2.4-5.7"/><path d="M4 4v4.5h4.5"/>',
+  power: '<path d="M12 3v8"/><path d="M6.6 6.6a8 8 0 1 0 10.8 0"/>',
+  pulse: '<path d="M3 12h4l2.5-6 4 12 2.5-6H21"/>',
+  bars: '<path d="M4 20V10M10 20V4M16 20v-7M21 20H3"/>',
+  shield: '<path d="M12 3l8 3v6c0 4.5-3.4 8-8 9-4.6-1-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/>',
+  flow: '<rect x="3" y="4" width="6" height="6" rx="1.5"/><rect x="15" y="14" width="6" height="6" rx="1.5"/><path d="M9 7h3a3 3 0 0 1 3 3v4"/>',
+  agent: '<rect x="4" y="7" width="16" height="12" rx="3"/><path d="M12 3v4M9 12v1.5M15 12v1.5M9.5 16h5"/>',
+  grid: '<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/>',
+};
+// The services' look, by module (and site, for the ai module's own sites).
+const SERVICE_LOOK = {
+  'ai/swarm': ['image', 'var(--image)'], 'ai/chat': ['chat', 'var(--web)'],
+  'uptime-kuma': ['pulse', 'var(--accent)'], 'beszel': ['bars', 'var(--orange)'], 'pihole': ['shield', 'var(--red)'],
+  'n8n': ['flow', 'var(--pink)'], 'hermes': ['agent', 'var(--teal)'],
 };
 const icon = n => `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">${ICONS[n]}</svg>`;
 let LINKS = [];
@@ -1032,8 +1065,12 @@ async function loadLinks() {
     LINKS = (d.links || []).map(l => ({...l, url: l.url.replace('{{.Host}}', location.hostname)}));
   } catch (e) { return; }
   document.getElementById('links').innerHTML = LINKS.filter(l => !(l.module === 'ai' && l.site === 'main')).map(l =>
-    `<a class="link" href="${esc(l.url)}"><div><div class="t">${esc(l.title)}</div><div class="d">${esc(l.description)}</div></div>
-     <span class="u">${esc(l.url.replace(/^https?:\\/\\/[^/:]*/, '').replace(/\\/$/, '') || '')}</span><span class="arrow">${icon('arrow')}</span></a>`).join('')
+{
+    const [ic, color] = SERVICE_LOOK[l.module + '/' + l.site] || SERVICE_LOOK[l.module] || ['grid', 'var(--muted)'];
+    return `<a class="link" href="${esc(l.url)}" style="--c:${color}"><span class="sicon">${icon(ic)}</span>
+     <div><div class="t">${esc(l.title)}<span class="u">${esc(l.url.replace(/^https?:\\/\\/[^/:]*/, '').replace(/\\/$/, '') || '')}</span></div>
+     <div class="d">${esc(l.description)}</div></div></a>`;
+  }).join('')
     || '<div class="state">No other services on this box.</div>';
   const main = siteLink('ai', 'main');
   document.getElementById('api').textContent = (main ? main.replace(/\\/$/, '') : location.origin) + '/v1';
@@ -1071,6 +1108,13 @@ function tick() {
   live.lastChild.textContent = off ? 'not answering' : 'live';
 }
 setInterval(tick, 1000);
+const FAV = document.getElementById('favicon').href;
+function favicon(dot) {
+  const el = document.getElementById('favicon');
+  const href = dot ? FAV.replace('%3C/svg%3E', '').replace(/<\/svg>$/, '')
+    + `<circle cx='25' cy='25' r='6.5' fill='${dot.replace('#', '%23')}' stroke='%23121211' stroke-width='2'/></svg>` : FAV;
+  if (el.href !== href) el.href = href;
+}
 function setHTML(id, html) {
   const el = document.getElementById(id);
   if (el._html !== html) { el.innerHTML = html; el._html = html; }
@@ -1245,6 +1289,7 @@ async function load() {
     ? `<span class="state busy">Switching to ${esc(target ? target.title : 'nothing')}…</span>`
     : holder ? `<span class="state on">● ${esc(holder.title)}${holder.always_on ? ' (' + esc(shortName(holder.loaded[0])) + ')' : ''} has the GPU</span>`
     : 'The GPU is free';
+  favicon(d.switching ? '#e3b350' : holder ? '#72e09e' : '');
   setHTML('now', nowCard(d, svcs));
   setHTML('choices', svcs.map(s => choice(s, d)).join(''));
   setHTML('vitals', vitals(d));
@@ -1313,20 +1358,24 @@ const powerText = {
   reboot: ['Really restart?', 'Restarting… back in about two minutes.'],
   poweroff: ['Really shut down?', 'Shutting down… back with the power button (or Wake-on-LAN, if the BIOS allows it).'],
 };
-document.querySelectorAll('[data-power]').forEach(b => b.onclick = () => power(b));
+document.querySelectorAll('[data-power]').forEach(b => {
+  b.insertAdjacentHTML('afterbegin', icon(b.dataset.icon));
+  b.onclick = () => power(b);
+});
+const label = (b, text) => b.querySelector('span').textContent = text;
 async function power(b) {
   const action = b.dataset.power, state = document.getElementById('power-state');
   if (!b.classList.contains('confirm')) {
-    document.querySelectorAll('[data-power]').forEach(o => { o.classList.remove('confirm'); o.textContent = o.dataset.label; });
+    document.querySelectorAll('[data-power]').forEach(o => { o.classList.remove('confirm'); label(o, o.dataset.label); });
     b.classList.add('confirm');
-    b.textContent = powerText[action][0];
+    label(b, powerText[action][0]);
     clearTimeout(b.timer);
-    b.timer = setTimeout(() => { b.classList.remove('confirm'); b.textContent = b.dataset.label; }, 5000);
+    b.timer = setTimeout(() => { b.classList.remove('confirm'); label(b, b.dataset.label); }, 5000);
     return;
   }
   clearTimeout(b.timer);
   b.classList.remove('confirm');
-  b.textContent = b.dataset.label;
+  label(b, b.dataset.label);
   state.className = 'state busy';
   state.textContent = 'Sending…';
   try {

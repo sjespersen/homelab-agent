@@ -41,16 +41,19 @@ token. It's `API_KEY` in `/opt/stacks/ai/data/.env` on the server.
 
 ## The page
 
-`http://<name>.local` (and `:8005`), in two columns:
+`http://<name>.local` (and `:8005`). The header has suspend, restart and shut down (each asks
+again on the button itself); the tab's icon gets a green dot while something has the GPU and
+an amber one while switching. Below, two columns:
 
 - **GPU**: what has it now (ready, answering, loading; up for how long; when the idle stop
   comes), or while switching the steps (free the GPU, start the container, load the model)
   with a timer. Below, a card per service with a Use button: chat models (API and web
   chat), SwarmUI (images) and Ollama (web chat, always running; "Make room" stops whatever
-  has the GPU so its models load right away). Then the API (connect) and the other services.
+  has the GPU so its models load right away). Then the other services, each with its own
+  icon, and the API (connect).
 - **Box**: GPU, CPU, memory and power, each kind of number with its own look: memory as a
   bar (video memory per GB), load as a graph of the last 3 minutes, temperature on a
-  cool-to-hot scale, power split into GPU, CPU and the rest. Then power buttons and lighting.
+  cool-to-hot scale, power split into GPU, CPU and the rest. Then the case lighting.
 
 The total power is an estimate: GPU and CPU as measured, plus about 35 W for the board, RAM,
 SSDs, fans and power supply losses (`REST_WATTS` in `switcher/app.py`); only a smart plug
