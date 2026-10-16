@@ -38,6 +38,9 @@ LEDS_STATUS = LEDS_FILE + ".status"
 # (stacks/ai/host/homelab-power.sh), which accepts nothing but these three words.
 POWER_FILE = os.path.join(os.path.dirname(STATE), "power")
 POWER_ACTIONS = ("suspend", "reboot", "poweroff")
+# The chat model last given the GPU, for API requests that name no model while none runs
+# (STATE says "none" after Stop or an idle stop).
+LAST_CHAT_FILE = os.path.join(os.path.dirname(STATE), "last-chat")
 
 LEDS_DEFAULTS = {"state": "", "effect": os.environ.get("LEDS_EFFECT", "Rainbow wave"),
                  "speed": os.environ.get("LEDS_SPEED", ""), "color": "FFFFFF"}
@@ -57,10 +60,12 @@ HOP_HEADERS = {"connection", "keep-alive", "proxy-authenticate", "proxy-authoriz
 switching = {"to": None, "error": None}
 lock = threading.Lock()
 # API requests in flight per service, and when the API or the GPU was last busy. A switch for
-# a request waits until the other service has no requests left.
+# a request waits until the other service has no requests left. "waiting" counts requests
+# from arrival to the end of their answer (an idle stop never starts while one is), and
+# "stopping" is set while an idle stop runs (requests wait for it, then start the model again).
 api = threading.Condition()
 inflight = {}
-activity = {"last": time.time(), "chat": None, "idle_stop": None}
+activity = {"last": time.time(), "chat": None, "idle_stop": None, "waiting": 0, "stopping": False}
 
 
 def docker(method, path):
@@ -177,6 +182,10 @@ def switch(target):
                 docker("POST", f"/containers/{s['container']}/start")
         with open(STATE, "w") as f:
             f.write(target + "\n")
+        if any(s["id"] == target and s["models"] for s in all_services):
+            activity["chat"] = target
+            with open(LAST_CHAT_FILE, "w") as f:
+                f.write(target + "\n")
         switching["error"] = None
     except Exception as e:
         switching["error"] = str(e)
@@ -197,7 +206,7 @@ def started_at(service):
 def chat_target(model, all_services):
     """The chat service for a request's model name: the service whose homelab.ai.model names
     it (or a longer name starting with it, like Strata's qwen3.8-flash-next-iq3_s), else the
-    chat model that runs, else the last one used, else the first."""
+    chat model that runs, else the last one used (kept across restarts), else the first."""
     chat = [s for s in all_services if s["models"]]
     if not chat:
         return None
@@ -208,14 +217,18 @@ def chat_target(model, all_services):
     for s in chat:
         if s["state"] == "running":
             return s
-    last = activity["chat"]
-    if last is None:
+    candidates = [activity["chat"]]
+    for path in (LAST_CHAT_FILE, STATE):
         try:
-            with open(STATE) as f:
-                last = f.read().strip()
+            with open(path) as f:
+                candidates.append(f.read().strip())
         except OSError:
             pass
-    return next((s for s in chat if s["id"] == last), chat[0])
+    for last in candidates:
+        found = next((s for s in chat if s["id"] == last), None)
+        if found:
+            return found
+    return chat[0]
 
 
 def ensure_running(target):
@@ -223,6 +236,9 @@ def ensure_running(target):
     error message, or None."""
     deadline = time.time() + START_TIMEOUT
     while True:
+        # An idle stop that began before this request: let it finish, then start the model.
+        with api:
+            api.wait_for(lambda: not activity["stopping"], timeout=max(1, deadline - time.time()))
         svcs = {s["id"]: s for s in services()}
         s = svcs[target]
         if s["state"] == "running" and s["health"] in ("healthy", None):
@@ -258,7 +274,7 @@ def idle_watch():
         if g and g["util"] >= 10:
             activity["last"] = time.time()  # e.g. Open WebUI talking to it directly
         with api:
-            busy = any(inflight.values())
+            busy = activity["waiting"] > 0
         if busy or switching["to"]:
             continue
         try:
@@ -268,10 +284,23 @@ def idle_watch():
         for s in running:
             if time.time() - max(activity["last"], started_at(s)) < IDLE_MINUTES * 60:
                 continue
-            if lock.acquire(blocking=False):
+            if not lock.acquire(blocking=False):
+                continue
+            # Check again together with the requests' counter: a request that arrived since
+            # cancels the stop, and one arriving from now on waits for it.
+            with api:
+                if activity["waiting"] or time.time() - activity["last"] < IDLE_MINUTES * 60:
+                    lock.release()
+                    continue
+                activity["stopping"] = True
+            try:
                 switching["to"] = "none"
                 switch("none")  # releases the lock
                 activity["idle_stop"] = {"service": s["title"], "at": int(time.time())}
+            finally:
+                with api:
+                    activity["stopping"] = False
+                    api.notify_all()
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -289,9 +318,11 @@ class Handler(BaseHTTPRequestHandler):
         return False
 
     def api_authed(self):
-        """The API key as a Bearer token, or as x-api-key (Anthropic clients)."""
-        key = self.headers.get("x-api-key", "").strip()
-        return self.authed() or bool(key and hmac.compare_digest(key, API_KEY))
+        """The API key as a Bearer token, or as x-api-key (Anthropic clients). Not the page's
+        login cookie: a browser sends that along with requests other sites make."""
+        auth = self.headers.get("Authorization", "")
+        key = auth[7:].strip() if auth.startswith("Bearer ") else self.headers.get("x-api-key", "").strip()
+        return bool(key and hmac.compare_digest(key, API_KEY))
 
     def read_body(self):
         if "chunked" in self.headers.get("Transfer-Encoding", "").lower():
@@ -339,19 +370,26 @@ class Handler(BaseHTTPRequestHandler):
         target = chat_target(model, all_services)
         if target is None:
             return self.api_error(503, "no chat model in this stack")
-        activity["last"] = time.time()
-        error = ensure_running(target["id"])
-        if error:
-            return self.api_error(503, error)
-        activity["chat"] = target["id"]
         with api:
-            inflight[target["id"]] = inflight.get(target["id"], 0) + 1
-        try:
-            self.proxy(target["id"], body)
-        finally:
+            activity["waiting"] += 1
             activity["last"] = time.time()
+        try:
+            error = ensure_running(target["id"])
+            if error:
+                return self.api_error(503, error)
+            activity["chat"] = target["id"]
             with api:
-                inflight[target["id"]] -= 1
+                inflight[target["id"]] = inflight.get(target["id"], 0) + 1
+            try:
+                self.proxy(target["id"], body)
+            finally:
+                with api:
+                    inflight[target["id"]] -= 1
+                    api.notify_all()
+        finally:
+            with api:
+                activity["waiting"] -= 1
+                activity["last"] = time.time()
                 api.notify_all()
 
     def proxy(self, service, body):
