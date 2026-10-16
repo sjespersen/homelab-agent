@@ -286,6 +286,10 @@ services:
   switcher:
     image: python:3.13-slim@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f  # 3.13.16
     container_name: ai-switcher
+    labels:
+      # A hash of the mounted code (before-up.sh): when it changes, compose recreates the
+      # container, so a deploy restarts the switcher with the new code.
+      homelab.switcher.code: "${SWITCHER_CODE:-}"
     user: "${PUID}:${PGID}"
     command: ["python", "/app/app.py"]
     env_file:

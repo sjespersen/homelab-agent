@@ -28,6 +28,15 @@ done
 key=$(sed -n 's/^API_KEY=//p' data/.env)
 (umask 077; printf 'OPENAI_API_KEYS=%s\n' "$key" >data/webchat.env)
 
+# The switcher's code is mounted, not part of its image: a hash of it in .env (a label in
+# compose.yaml) makes compose recreate the container when the code changed.
+code=$(cat switcher/*.py | sha256sum | cut -c1-16)
+if grep -q '^SWITCHER_CODE=' .env; then
+  sed -i "s/^SWITCHER_CODE=.*/SWITCHER_CODE=\"$code\"/" .env
+else
+  echo "SWITCHER_CODE=\"$code\"" >>.env
+fi
+
 # Which service gets the GPU: the last one picked in the switcher (or ./ai-model.sh), else
 # AI_MODEL from the config; "none" after Stop. compose up starts only that one
 # (COMPOSE_PROFILES; empty: just the switcher).
