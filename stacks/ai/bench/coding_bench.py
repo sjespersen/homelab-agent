@@ -150,6 +150,25 @@ def report(folders):
     stat("cut off (length)", lambda rs: str(sum(r["finish_reason"] == "length" for r in rs)))
 
 
+def cmd_regrade(args):
+    """Runs the current tests again on saved answers (after a test was fixed)."""
+    tests = {t["id"]: t["tests"] for t in TASKS}
+    for folder in args.folders:
+        for name in sorted(os.listdir(folder)):
+            if not re.fullmatch(r".+\.\d+\.json", name):
+                continue
+            path = os.path.join(folder, name)
+            with open(path) as f:
+                r = json.load(f)
+            passed, output = run_tests(r["code"], tests[r["task"]], args.test_timeout) if r["code"] else (False, "no code block")
+            if passed != r["passed"]:
+                print(f"{folder}/{name}: {'fail -> PASS' if passed else 'PASS -> fail'}")
+            r["passed"], r["test_output"] = passed, output
+            with open(path, "w") as f:
+                json.dump(r, f, indent=1)
+    report(args.folders)
+
+
 def cmd_self_check(args):
     bad = 0
     for t in TASKS:
@@ -185,6 +204,10 @@ def main():
     rep = sub.add_parser("report", help="compare result folders side by side")
     rep.add_argument("folders", nargs="+")
     rep.set_defaults(func=lambda a: report(a.folders))
+    g = sub.add_parser("regrade", help="run the current tests again on saved answers")
+    g.add_argument("folders", nargs="+")
+    g.add_argument("--test-timeout", type=int, default=60)
+    g.set_defaults(func=cmd_regrade)
     s = sub.add_parser("self-check", help="check the tests against the reference solutions")
     s.add_argument("--test-timeout", type=int, default=60)
     s.set_defaults(func=cmd_self_check)
