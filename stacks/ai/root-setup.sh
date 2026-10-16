@@ -34,13 +34,18 @@ fi
 install -d -o "$SERVER_USER" -g "$SERVER_USER" /opt/stacks/ai/data/switcher
 install -m 755 "$repo/stacks/ai/host/homelab-power.sh" /usr/local/sbin/homelab-power.sh
 install -m 755 "$repo/stacks/ai/host/homelab-ai-sleep.sh" /usr/local/sbin/homelab-ai-sleep.sh
-for unit in homelab-power.service homelab-power.path homelab-ai-sleep.service; do
+# The page's CPU power tile: RAPL is root-only, so a root service writes whole watts to
+# data/switcher/cpu-power every 2 s.
+install -m 755 "$repo/stacks/ai/host/homelab-cpu-power.sh" /usr/local/sbin/homelab-cpu-power.sh
+for unit in homelab-power.service homelab-power.path homelab-ai-sleep.service homelab-cpu-power.service; do
   sed "s|@DIR@|/opt/stacks/ai/data/switcher|" "$repo/stacks/ai/host/$unit" >/etc/systemd/system/$unit
 done
 rm -f /usr/lib/systemd/system-sleep/homelab-ai-sleep  # the earlier hook ran too late
 systemctl daemon-reload
 systemctl enable --now homelab-power.path
 systemctl enable homelab-ai-sleep.service
+systemctl enable homelab-cpu-power.service
+systemctl restart homelab-cpu-power.service
 
 # AI_LEDS=yes: the LED switch on the Local AI page. The switcher only writes "on" or "off" to
 # data/switcher/leds; homelab-leds.path notices and runs homelab-leds.sh as root with OpenRGB,

@@ -39,6 +39,16 @@ token. It's `API_KEY` in `/opt/stacks/ai/data/.env` on the server.
    install (several minutes). Then add models in its Models tab or with the model downloader
    (paste a Hugging Face or Civitai link).
 
+## The page
+
+`http://<name>.local` (and `:8005`): who has the GPU; GPU memory, load, temperature and
+power; CPU load and temperature; RAM; and the box's total power. The total is an estimate:
+GPU and CPU as measured, plus about 35 W for the board, RAM, SSDs, fans and power supply
+losses (`REST_WATTS` in `switcher/app.py`); only a smart plug measures it exactly. The CPU's
+power comes from `homelab-cpu-power.service` (RAPL is readable by root only), which
+`root-setup.sh` installs: on a box set up before, rerun `./setup.sh` once. Below that: the
+models (switch, stop, open), the other services, the API, power and lighting.
+
 ## Switch
 
 On the switcher page, or from your computer:

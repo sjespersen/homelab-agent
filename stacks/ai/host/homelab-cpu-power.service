@@ -1,0 +1,11 @@
+[Unit]
+Description=CPU power draw for the Local AI page (RAPL, whole watts every 2 s)
+
+[Service]
+ExecStart=/usr/local/sbin/homelab-cpu-power.sh @DIR@
+Restart=on-failure
+RestartSec=30
+Nice=10
+
+[Install]
+WantedBy=multi-user.target

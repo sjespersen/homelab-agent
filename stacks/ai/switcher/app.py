@@ -10,6 +10,7 @@ The chat API (/v1) goes through here too: a request naming the other chat model'
 the chat model is stopped; the next request starts it again.
 """
 
+import glob
 import hashlib
 import hmac
 import http.client
@@ -128,6 +129,54 @@ def gpu():
                 "power": power}
     except Exception:
         return None
+
+
+# The CPU package's power in watts (homelab-cpu-power.service writes it every 2 s, from RAPL),
+# and what the rest of the box roughly draws on top of CPU and GPU (board, RAM, SSDs, fans,
+# power supply losses), for the page's total: an estimate, not a reading at the socket.
+CPU_POWER_FILE = os.path.join(os.path.dirname(STATE), "cpu-power")
+REST_WATTS = 35
+_cpu_last = {}
+
+
+def cpu():
+    """CPU load in % since the last call (the host's /proc/stat), temperature, power."""
+    out = {"cores": os.cpu_count()}
+
+    def sample():
+        with open("/proc/stat") as f:
+            v = [int(x) for x in f.readline().split()[1:9]]
+        return v[3] + v[4], sum(v)  # idle + iowait, total
+
+    try:
+        if "v" not in _cpu_last:
+            _cpu_last["v"] = sample()
+            time.sleep(0.25)
+        idle, total = sample()
+        p_idle, p_total = _cpu_last["v"]
+        if total > p_total:
+            out["load"] = round(100 * (1 - (idle - p_idle) / (total - p_total)))
+        _cpu_last["v"] = (idle, total)
+    except (OSError, ValueError, IndexError):
+        pass
+    for h in glob.glob("/sys/class/hwmon/hwmon*"):
+        try:
+            with open(h + "/name") as f:
+                if f.read().strip() not in ("k10temp", "zenpower", "coretemp"):
+                    continue
+            with open(h + "/temp1_input") as f:
+                out["temp"] = round(int(f.read()) / 1000)
+            break
+        except (OSError, ValueError):
+            continue
+    try:
+        with open(CPU_POWER_FILE) as f:
+            watts, at = f.read().split()
+        if time.time() - int(at) < 10:
+            out["power"] = int(watts)
+    except (OSError, ValueError):
+        pass
+    return out
 
 
 def ram():
@@ -606,7 +655,12 @@ class Handler(BaseHTTPRequestHandler):
                         s["installed"] = len(ollama_call("GET", "/api/tags", timeout=5).get("models", []))
                     except (OSError, ValueError):
                         s["installed"] = None
-            return self.json({"services": svcs, "gpu": gpu(), "ram": ram(), "switching": switching["to"],
+            g, c = gpu(), cpu()
+            total = None
+            if g and g.get("power") is not None and c.get("power") is not None:
+                total = g["power"] + c["power"] + REST_WATTS
+            return self.json({"services": svcs, "gpu": g, "cpu": c, "ram": ram(), "total_power": total,
+                              "rest_watts": REST_WATTS, "switching": switching["to"],
                               "error": switching["error"], "leds": leds(),
                               "idle_minutes": IDLE_MINUTES, "idle_stop": activity["idle_stop"]})
         self.send(404, "not found")
@@ -704,86 +758,92 @@ STYLE = """
 :root { --bg:#f5f5f2; --card:#fff; --ink:#1c1c1a; --muted:#6b6b64; --faint:#9a9a92; --line:#e4e4de;
   --soft:#efefea; --accent:#2f6f4f; --accent-soft:#e3efe8; --warn:#9a6b00; --warn-soft:#f7ecd2;
   --bad:#b03a3a; --bad-soft:#f6e1e1; --on-accent:#fff; color-scheme: light; }
-@media (prefers-color-scheme: dark) { :root { --bg:#131312; --card:#1d1d1b; --ink:#ecece7; --muted:#a0a098;
-  --faint:#77776f; --line:#30302c; --soft:#262623; --accent:#72c296; --accent-soft:#1f3329; --warn:#e3b350;
+@media (prefers-color-scheme: dark) { :root { --bg:#131312; --card:#1c1c1a; --ink:#ecece7; --muted:#a0a098;
+  --faint:#77776f; --line:#2f2f2b; --soft:#262623; --accent:#72c296; --accent-soft:#1f3329; --warn:#e3b350;
   --warn-soft:#3a2f17; --bad:#e57b7b; --bad-soft:#3b2020; --on-accent:#0f2419; color-scheme: dark; } }
 * { box-sizing: border-box; }
-body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
-main { max-width: 960px; margin: 0 auto; padding: 20px 16px 56px; }
+body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width: 1080px; margin: 0 auto; padding: 14px 16px 28px; }
 a { color: inherit; }
-h1 { font-size: 22px; margin: 0; letter-spacing: -.01em; }
-h2 { font-size: 13px; font-weight: 600; text-transform: uppercase; letter-spacing: .06em; color: var(--muted);
-  margin: 32px 0 10px; }
-h3 { font-size: 16px; margin: 0; }
-.sub, .hint { color: var(--muted); font-size: 13px; margin: 2px 0 0; }
-.hint { margin: -4px 0 12px; }
-.top { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;
-  padding-bottom: 16px; border-bottom: 1px solid var(--line); }
-.brand { display:flex; align-items:center; gap:12px; }
-.logo { width:38px; height:38px; border-radius:10px; background:var(--accent); color:var(--on-accent); display:grid;
-  place-items:center; font-weight:700; font-size:18px; }
-.card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:16px; }
-.grid { display:grid; gap:12px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 340px), 1fr)); }
-.tiles { display:grid; gap:12px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); margin-top: 20px; }
-.tile { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px 14px; }
-.tile .label { font-size:12px; color:var(--muted); }
-.tile .value { font-size:22px; font-weight:600; margin-top:2px; font-variant-numeric: tabular-nums; }
-.tile .sub { font-size:12px; color:var(--faint); margin-top:4px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.meter { height:6px; background:var(--soft); border-radius:3px; overflow:hidden; margin-top:8px; }
-.meter > i { display:block; height:100%; background:var(--accent); border-radius:3px; transition: width .4s; }
+h1 { font-size: 18px; margin: 0; letter-spacing: -.01em; line-height: 1.2; }
+h2 { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); margin: 0; }
+.sub { color: var(--muted); font-size: 12px; margin: 1px 0 0; }
+.hint { color: var(--faint); font-size: 12px; }
+.top { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom: 12px; }
+.brand { display:flex; align-items:center; gap:10px; }
+.logo { width:32px; height:32px; border-radius:9px; background:var(--accent); color:var(--on-accent); display:grid;
+  place-items:center; font-weight:700; font-size:14px; }
+.card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px 14px; }
+.card-head { display:flex; justify-content:space-between; align-items:baseline; gap:10px; flex-wrap:wrap; margin-bottom: 8px; }
+.tiles { display:grid; gap:8px; grid-template-columns: repeat(auto-fit, minmax(112px, 1fr)); margin-bottom: 12px; }
+.tile { background:var(--card); border:1px solid var(--line); border-radius:10px; padding:8px 10px; min-width:0; }
+.tile .label { font-size:11px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.tile .value { font-size:17px; font-weight:600; font-variant-numeric: tabular-nums; line-height:1.3; }
+.tile .sub { font-size:11px; color:var(--faint); margin:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.meter { height:4px; background:var(--soft); border-radius:2px; overflow:hidden; margin:4px 0 3px; }
+.meter > i { display:block; height:100%; background:var(--accent); border-radius:2px; transition: width .4s; }
 .meter.warn > i { background:var(--warn); } .meter.bad > i { background:var(--bad); }
-.group + .group { margin-top: 18px; }
-.group-title { font-size:14px; font-weight:600; margin: 0 0 2px; }
-.svc { display:flex; flex-direction:column; gap:10px; position:relative; }
-.svc.active { border-color: var(--accent); box-shadow: inset 3px 0 0 var(--accent); }
-.svc-head { display:flex; justify-content:space-between; align-items:flex-start; gap:10px; }
-.about { color:var(--muted); font-size:13px; margin:0; }
-.chips { display:flex; flex-wrap:wrap; gap:6px; }
-.chip { font-size:12px; padding:2px 8px; border-radius:999px; background:var(--soft); color:var(--muted);
+.cols { display:grid; gap:12px; grid-template-columns: minmax(0, 1.45fr) minmax(0, 1fr); align-items:start; }
+.col { display:grid; gap:12px; min-width:0; }
+@media (max-width: 860px) { .cols { grid-template-columns: 1fr; } }
+.group-label { font-size:11px; color:var(--faint); text-transform:uppercase; letter-spacing:.06em; margin:10px 0 4px; }
+.group-label:first-child { margin-top: 0; }
+.svc-row { display:flex; gap:10px; align-items:center; padding:8px 10px; border:1px solid var(--line);
+  border-radius:9px; margin-bottom:6px; }
+.svc-row.active { border-color: var(--accent); background: var(--accent-soft); }
+.svc-main { flex:1; min-width:0; }
+.svc-title { display:flex; align-items:center; gap:8px; flex-wrap:wrap; font-weight:600; }
+.svc-sub { color:var(--muted); font-size:12px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.chips { display:flex; flex-wrap:wrap; gap:4px; margin-top:3px; }
+.chip { font-size:11px; padding:1px 7px; border-radius:999px; background:var(--soft); color:var(--muted);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.svc-row.active .chip { background: var(--card); }
 .chip.plain { font-family: inherit; }
-.pill { display:inline-flex; align-items:center; gap:6px; font-size:12px; font-weight:500; padding:3px 9px;
+.pill { display:inline-flex; align-items:center; gap:5px; font-size:11px; font-weight:500; padding:1px 8px;
   border-radius:999px; white-space:nowrap; background:var(--soft); color:var(--muted); }
-.pill::before { content:""; width:7px; height:7px; border-radius:50%; background:currentColor; }
+.pill::before { content:""; width:6px; height:6px; border-radius:50%; background:currentColor; }
 .pill.on { background:var(--accent-soft); color:var(--accent); }
+.svc-row.active .pill.on { background: var(--card); }
 .pill.busy { background:var(--warn-soft); color:var(--warn); }
 .pill.bad { background:var(--bad-soft); color:var(--bad); }
-.actions { display:flex; gap:8px; flex-wrap:wrap; margin-top:auto; }
-button, .btn { font:inherit; font-size:14px; padding:7px 14px; border-radius:8px; border:1px solid var(--line);
+.actions { display:flex; gap:6px; flex-wrap:wrap; flex-shrink:0; }
+button, .btn { font:inherit; font-size:13px; padding:5px 11px; border-radius:7px; border:1px solid var(--line);
   background:var(--card); color:var(--ink); cursor:pointer; text-decoration:none; display:inline-flex;
-  align-items:center; gap:6px; }
+  align-items:center; gap:6px; white-space:nowrap; }
 button:hover:not(:disabled), .btn:hover { border-color: var(--faint); }
 button.primary { background:var(--accent); border-color:var(--accent); color:var(--on-accent); font-weight:500; }
-button.small { font-size:13px; padding:4px 10px; }
+button.small { font-size:12px; padding:3px 9px; }
 button:disabled { opacity:.45; cursor:default; }
 button.confirm { background:var(--bad); border-color:var(--bad); color:#fff; }
-.links { display:grid; gap:10px; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); }
-.link { display:block; text-decoration:none; background:var(--card); border:1px solid var(--line);
-  border-radius:12px; padding:12px 14px; }
+.linklist { display:grid; gap:6px; }
+.link { display:flex; justify-content:space-between; align-items:center; gap:10px; text-decoration:none;
+  padding:7px 10px; border:1px solid var(--line); border-radius:9px; }
 .link:hover { border-color: var(--faint); }
-.link .t { font-weight:600; } .link .d { color:var(--muted); font-size:13px; }
-.link .u { color:var(--faint); font-size:12px; margin-top:4px; }
-.kv { display:grid; grid-template-columns: 110px 1fr; gap:10px 16px; align-items:baseline; font-size:14px; }
-.kv > dt { color:var(--muted); font-size:13px; }
-.kv > dd { margin:0; min-width:0; }
-.copyrow { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
-code { font: 13px ui-monospace, SFMono-Regular, Menlo, monospace; background:var(--soft); padding:2px 6px;
+.link .t { font-weight:600; } .link .d { color:var(--muted); font-size:12px; }
+.link .u { color:var(--faint); font-size:11px; white-space:nowrap; }
+.kv { display:grid; grid-template-columns: 92px 1fr; gap:6px 12px; align-items:baseline; margin:0; }
+.kv > dt { color:var(--muted); font-size:12px; }
+.kv > dd { margin:0; min-width:0; font-size:13px; }
+.copyrow { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
+code { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; background:var(--soft); padding:1px 5px;
   border-radius:5px; overflow-wrap: anywhere; }
-.banner { background:var(--bad-soft); color:var(--bad); border-radius:10px; padding:10px 14px; margin-top:16px; font-size:14px; }
-.state { font-size:13px; color:var(--muted); }
+.banner { background:var(--bad-soft); color:var(--bad); border-radius:9px; padding:8px 12px; margin-bottom:12px; font-size:13px; }
+.state { font-size:12px; color:var(--muted); }
 .state.on { color:var(--accent); } .state.busy { color:var(--warn); } .state.bad { color:var(--bad); }
-.controls { display:flex; gap:12px 20px; flex-wrap:wrap; margin-top:4px; padding-top:12px; border-top:1px solid var(--line); }
-.controls label { display:flex; gap:8px; align-items:center; font-size:13px; color:var(--muted); }
-.controls select { font:inherit; font-size:13px; padding:5px 8px; border-radius:7px; border:1px solid var(--line);
+.about { color:var(--muted); font-size:12px; margin:0 0 8px; }
+.controls { display:flex; gap:8px 16px; flex-wrap:wrap; align-items:center; margin-bottom:8px; }
+.controls label { display:flex; gap:6px; align-items:center; font-size:12px; color:var(--muted); }
+.controls select { font:inherit; font-size:12px; padding:3px 6px; border-radius:6px; border:1px solid var(--line);
   background:var(--bg); color:var(--ink); }
-.controls input[type=range] { width:130px; }
-.controls input[type=color] { width:40px; height:28px; padding:0 2px; border:1px solid var(--line); border-radius:6px; background:var(--bg); }
-.login { max-width: 380px; margin: 12vh auto 0; }
-.login input { font:inherit; padding:9px 10px; width:100%; border:1px solid var(--line); border-radius:8px;
+.controls input[type=range] { width:110px; accent-color: var(--accent); }
+.controls input[type=color] { width:34px; height:24px; padding:0 2px; border:1px solid var(--line); border-radius:5px; background:var(--bg); }
+.login { max-width: 380px; margin: 12vh auto 0; padding: 18px; }
+.login input { font:inherit; padding:8px 10px; width:100%; border:1px solid var(--line); border-radius:8px;
   background:var(--bg); color:var(--ink); margin:6px 0 14px; }
-.err { color:var(--bad); font-size:14px; }
-footer { margin-top: 36px; color: var(--faint); font-size: 12px; }
-@media (max-width: 560px) { .kv { grid-template-columns: 1fr; gap: 2px; } .kv > dd { margin-bottom: 10px; } }
+.err { color:var(--bad); font-size:13px; }
+footer { margin-top: 14px; color: var(--faint); font-size: 11px; }
+@media (max-width: 560px) { .kv { grid-template-columns: 1fr; gap: 1px; } .kv > dd { margin-bottom: 8px; }
+  .svc-row { flex-wrap: wrap; } .svc-sub { white-space: normal; } }
 """
 
 LOGIN = """<!doctype html><html><head><meta charset="utf-8">
@@ -811,37 +871,35 @@ PAGE = """<!doctype html><html><head><meta charset="utf-8">
   <a class="btn" href="/_ai/logout">Sign out</a>
 </header>
 <div class="banner" id="error" hidden></div>
-<div class="tiles" id="tiles"></div>
-
-<h2>Models</h2>
-<p class="hint">One service at a time has the GPU. Picking a model in the web chat or through the API
-switches to it by itself; the buttons here do it by hand.</p>
-<div id="groups"></div>
-
-<h2>Services</h2>
-<div class="links" id="links"></div>
-
-<h2>Connect</h2>
-<div class="card"><dl class="kv">
-  <dt>API base URL</dt><dd><div class="copyrow"><code id="api"></code>
-    <button class="small" id="copy-api">Copy</button></div></dd>
-  <dt>Key</dt><dd>The API key, as <code>Authorization: Bearer &lt;key&gt;</code> or <code>x-api-key</code>.</dd>
-  <dt>Models</dt><dd><div class="chips" id="api-models"></div>
-    <div class="state">OpenAI-compatible; Strata also speaks Anthropic's <code>/v1/messages</code>.
-    Naming a model in a request gives it the GPU first.</div></dd>
-  <dt>Idle</dt><dd class="state" id="idle"></dd>
-</dl></div>
-
-<h2>Box</h2>
-<div class="grid">
-  <div class="card svc"><div class="svc-head"><h3>Power</h3></div>
-    <p class="about">The model is stopped before suspend and started again after waking. Wake it with
-    <code>./ai-model.sh wake</code> (Wake-on-LAN) or the power button.</p>
-    <div class="state" id="power-state"></div>
-    <div class="actions"><button data-power="suspend" data-label="Suspend">Suspend</button>
-    <button data-power="reboot" data-label="Restart">Restart</button>
-    <button data-power="poweroff" data-label="Shut down">Shut down</button></div></div>
-  <div id="leds"></div>
+<div class="tiles" id="tiles" title="Total power: GPU and CPU as measured, plus about 35 W for the board, RAM, SSDs, fans and power supply losses. A smart plug would measure it exactly."></div>
+<div class="cols">
+  <div class="col">
+    <section class="card">
+      <div class="card-head"><h2>GPU</h2><span class="hint">One at a time. A model picked in the web chat or the API takes it by itself.</span></div>
+      <div id="groups"></div>
+    </section>
+    <section class="card">
+      <div class="card-head"><h2>Connect</h2></div>
+      <dl class="kv">
+        <dt>API base URL</dt><dd><div class="copyrow"><code id="api"></code>
+          <button class="small" id="copy-api">Copy</button></div></dd>
+        <dt>Key</dt><dd>The API key, as <code>Authorization: Bearer &lt;key&gt;</code> or <code>x-api-key</code></dd>
+        <dt>Models</dt><dd><span class="chips" id="api-models" style="display:inline-flex;margin:0"></span>
+          <div class="state">OpenAI-compatible; Strata also speaks Anthropic's <code>/v1/messages</code>.</div></dd>
+        <dt>Idle</dt><dd class="state" id="idle"></dd>
+      </dl>
+    </section>
+  </div>
+  <div class="col">
+    <section class="card"><div class="card-head"><h2>Services</h2></div><div class="linklist" id="links"></div></section>
+    <section class="card"><div class="card-head"><h2>Power</h2><span class="state" id="power-state"></span></div>
+      <p class="about">The model stops before suspend and starts again after waking. Wake with
+      <code>./ai-model.sh wake</code> or the power button.</p>
+      <div class="actions"><button data-power="suspend" data-label="Suspend">Suspend</button>
+      <button data-power="reboot" data-label="Restart">Restart</button>
+      <button data-power="poweroff" data-label="Shut down">Shut down</button></div></section>
+    <div id="leds"></div>
+  </div>
 </div>
 <footer>Updates every 3 seconds.</footer>
 <script>
@@ -861,8 +919,8 @@ async function loadLinks() {
     LINKS = (d.links || []).map(l => ({...l, url: l.url.replace('{{.Host}}', location.hostname)}));
   } catch (e) { return; }
   document.getElementById('links').innerHTML = LINKS.filter(l => !(l.module === 'ai' && l.site === 'main')).map(l =>
-    `<a class="link" href="${esc(l.url)}"><div class="t">${esc(l.title)}</div><div class="d">${esc(l.description)}</div>
-     <div class="u">${esc(l.url.replace(/^https?:\\/\\//, '').replace(/\\/$/, ''))}</div></a>`).join('')
+    `<a class="link" href="${esc(l.url)}"><div><div class="t">${esc(l.title)}</div><div class="d">${esc(l.description)}</div></div>
+     <div class="u">${esc(l.url.replace(/^https?:\\/\\/[^/:]*/, '').replace(/\\/$/, '') || '')}</div></a>`).join('')
     || '<div class="state">No other services on this box.</div>';
   const main = siteLink('ai', 'main');
   document.getElementById('api').textContent = (main ? main.replace(/\\/$/, '') : location.origin) + '/v1';
@@ -889,12 +947,12 @@ function stateText(s, switchingTo) {
   return ['on', 'has the GPU'];
 }
 const GROUPS = [
-  ['Chat models', 'For the API (Hermes, scripts) and the web chat.', s => s.models && s.models.length],
-  ['Web chat models', 'Your Ollama models, in Open WebUI. Ollama runs all the time; a chat loads a model.', s => s.always_on],
-  ['Images', 'Image generation.', s => s.kind === 'image'],
-  ['Other', '', s => true],
+  ['Chat models · API and web chat', s => s.models && s.models.length],
+  ['Web chat models · Ollama, always running', s => s.always_on],
+  ['Images', s => s.kind === 'image'],
+  ['Other', s => true],
 ];
-function svcCard(s, busy, switchingTo) {
+function svcRow(s, busy, switchingTo) {
   const [cls, text] = stateText(s, switchingTo);
   const chips = [];
   if (s.models && s.models.length) chips.push(`<span class="chip">${esc(s.models[0])}</span>`);
@@ -908,32 +966,39 @@ function svcCard(s, busy, switchingTo) {
   const btn = holds(s)
     ? `<button ${busy ? 'disabled' : ''} onclick="go('none')">${s.always_on ? 'Unload' : 'Stop'}</button>`
     : `<button class="primary" ${busy ? 'disabled' : ''} onclick="go('${esc(s.id)}')">Switch to this</button>`;
-  return `<div class="card svc ${holds(s) ? 'active' : ''}">
-    <div class="svc-head"><h3>${esc(s.title)}</h3><span class="pill ${cls}">${text}</span></div>
-    <p class="about">${esc(s.about)}</p>
-    ${chips.length ? `<div class="chips">${chips.join('')}</div>` : ''}
+  return `<div class="svc-row ${holds(s) ? 'active' : ''}">
+    <div class="svc-main"><div class="svc-title">${esc(s.title)}<span class="pill ${cls}">${text}</span></div>
+      <div class="svc-sub" title="${esc(s.about)}">${esc(s.about)}</div>
+      ${chips.length ? `<div class="chips">${chips.join('')}</div>` : ''}</div>
     <div class="actions">${open}${btn}</div></div>`;
 }
 function tile(label, value, sub, pct, level) {
-  const meter = pct == null ? '' : `<div class="meter ${level || ''}"><i style="width:${Math.max(0, Math.min(100, pct))}%"></i></div>`;
+  const meter = `<div class="meter ${level || ''}"><i style="width:${pct == null ? 0 : Math.max(0, Math.min(100, pct))}%"></i></div>`;
   return `<div class="tile"><div class="label">${label}</div><div class="value">${value}</div>${meter}<div class="sub">${sub}</div></div>`;
 }
 const gb = mib => (mib / 1024).toFixed(1);
+const lvl = (v, warn, bad) => v >= bad ? 'bad' : v >= warn ? 'warn' : '';
 async function load() {
   let r;
   try { r = await fetch('/_ai/api/status'); } catch (e) { return; }
   if (r.status === 401) { location.href = '/_ai/login?next=/'; return; }
   const d = await r.json();
-  const g = d.gpu, m = d.ram, t = [];
+  const g = d.gpu, c = d.cpu || {}, m = d.ram, t = [];
   if (g) {
     const memPct = 100 * g.used / g.total;
-    t.push(tile('GPU memory', gb(g.used) + ' GB', 'of ' + gb(g.total) + ' GB', memPct, memPct > 95 ? 'warn' : ''));
+    t.push(tile('GPU memory', gb(g.used) + ' GB', 'of ' + gb(g.total) + ' GB', memPct, memPct > 97 ? 'warn' : ''));
     t.push(tile('GPU load', g.util + '%', esc(g.name.replace(/^NVIDIA (GeForce )?/, '')), g.util));
-    t.push(tile('GPU temperature', g.temp + ' °C', g.temp >= 83 ? 'hot' : 'normal', 100 * g.temp / 90, g.temp >= 83 ? 'bad' : g.temp >= 75 ? 'warn' : ''));
-    if (g.power != null) t.push(tile('GPU power', g.power + ' W', 'right now', null));
-  } else t.push(tile('GPU', '–', 'status unavailable', null));
+    t.push(tile('GPU temp', g.temp + ' °C', g.temp >= 83 ? 'hot' : 'normal', 100 * g.temp / 90, lvl(g.temp, 75, 83)));
+    t.push(tile('GPU power', g.power != null ? g.power + ' W' : '–', 'now', g.power != null ? 100 * g.power / 180 : null));
+  }
+  t.push(tile('CPU load', c.load != null ? c.load + '%' : '–', (c.cores || '?') + ' threads', c.load, lvl(c.load || 0, 85, 97)));
+  t.push(tile('CPU temp', c.temp != null ? c.temp + ' °C' : '–', c.temp == null ? 'no sensor' : c.temp >= 85 ? 'hot' : 'normal',
+    c.temp != null ? 100 * c.temp / 95 : null, lvl(c.temp || 0, 75, 85)));
   if (m) { const p = 100 * m.used / m.total;
-    t.push(tile('RAM', gb(m.used) + ' GB', 'of ' + gb(m.total) + ' GB', p, p > 92 ? 'bad' : p > 80 ? 'warn' : '')); }
+    t.push(tile('RAM', gb(m.used) + ' GB', 'of ' + gb(m.total) + ' GB', p, lvl(p, 80, 92))); }
+  t.push(d.total_power != null
+    ? tile('Total power ≈', d.total_power + ' W', `CPU ${c.power} W · estimate`, 100 * d.total_power / 350)
+    : tile('Total power ≈', '–', c.power == null ? 'CPU power: rerun setup.sh' : 'needs GPU power', null));
   document.getElementById('tiles').innerHTML = t.join('');
   const svcs = d.services || [], busy = !!d.switching;
   const holder = svcs.find(holds), target = svcs.find(s => s.id === d.switching);
@@ -942,11 +1007,10 @@ async function load() {
     : holder ? `<span class="state on">● ${esc(holder.title)}${holder.always_on ? ' (' + esc(shortName(holder.loaded[0])) + ')' : ''} has the GPU</span>`
     : 'The GPU is free';
   const used = new Set();
-  document.getElementById('groups').innerHTML = GROUPS.map(([title, note, match]) => {
+  document.getElementById('groups').innerHTML = GROUPS.map(([title, match]) => {
     const list = svcs.filter(s => !used.has(s.id) && match(s));
     list.forEach(s => used.add(s.id));
-    return list.length ? `<div class="group"><div class="group-title">${title}</div>${note ? `<p class="hint" style="margin:0 0 8px">${note}</p>` : ''}
-      <div class="grid">${list.map(s => svcCard(s, busy, d.switching)).join('')}</div></div>` : '';
+    return list.length ? `<div class="group-label">${title}</div>${list.map(s => svcRow(s, busy, d.switching)).join('')}` : '';
   }).join('');
   document.getElementById('api-models').innerHTML = svcs.filter(s => s.models && s.models.length)
     .map(s => `<span class="chip">${esc(s.models[0])}</span>`).join('');
@@ -954,9 +1018,9 @@ async function load() {
   err.textContent = d.error || ''; err.hidden = !d.error;
   const idle = d.idle_stop;
   document.getElementById('idle').textContent = (d.idle_minutes
-    ? `The chat model stops after ${d.idle_minutes} min without requests; the next request starts it again (1-2 min).`
+    ? `The chat model stops after ${d.idle_minutes} min without requests; the next one starts it again (1-2 min).`
     : 'Chat models stay loaded until you stop them.')
-    + (idle ? ` Last stopped when idle: ${idle.service}, ${new Date(idle.at * 1000).toLocaleString()}.` : '');
+    + (idle ? ` Last idle stop: ${idle.service}, ${new Date(idle.at * 1000).toLocaleString()}.` : '');
   renderLeds(d.leds);
 }
 // The LED card is built once; later loads only update it, so a control you're using isn't redrawn.
@@ -964,14 +1028,14 @@ function renderLeds(l) {
   const box = document.getElementById('leds');
   if (!l) { box.innerHTML = ''; return; }
   if (!box.firstChild) {
-    box.innerHTML = `<div class="card svc"><div class="svc-head"><h3>Case lighting</h3><span class="pill" id="leds-state"></span></div>
+    box.innerHTML = `<section class="card"><div class="card-head"><h2>Case lighting</h2><span class="pill" id="leds-state"></span></div>
       <p class="about" id="leds-devs"></p>
       <div class="controls">
         <label>Effect <select id="leds-effect"></select></label>
-        <label>Speed <span>slow</span><input type="range" id="leds-speed" min="0" max="100" step="5"><span>fast</span></label>
+        <label>Speed <input type="range" id="leds-speed" min="0" max="100" step="5"></label>
         <label>Color <input type="color" id="leds-color"></label>
       </div>
-      <div class="actions"><button id="leds-off">Off</button><button id="leds-on">On</button></div></div>`;
+      <div class="actions"><button id="leds-off">Off</button><button id="leds-on">On</button></div></section>`;
     document.getElementById('leds-off').onclick = () => setLeds({state: 'off'});
     document.getElementById('leds-on').onclick = () => setLeds({state: 'on'});
     document.getElementById('leds-effect').onchange = e => setLeds({state: 'on', effect: e.target.value});
@@ -1012,7 +1076,7 @@ async function setLeds(change) {
 const powerText = {
   suspend: ['Really suspend?', 'Suspending… the page stops answering until the box wakes up.'],
   reboot: ['Really restart?', 'Restarting… back in about two minutes.'],
-  poweroff: ['Really shut down?', 'Shutting down… it comes back with the power button (or Wake-on-LAN, if the BIOS allows it).'],
+  poweroff: ['Really shut down?', 'Shutting down… back with the power button (or Wake-on-LAN, if the BIOS allows it).'],
 };
 document.querySelectorAll('[data-power]').forEach(b => b.onclick = () => power(b));
 async function power(b) {
