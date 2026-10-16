@@ -41,13 +41,22 @@ token. It's `API_KEY` in `/opt/stacks/ai/data/.env` on the server.
 
 ## The page
 
-`http://<name>.local` (and `:8005`): who has the GPU; GPU memory, load, temperature and
-power; CPU load and temperature; RAM; and the box's total power. The total is an estimate:
-GPU and CPU as measured, plus about 35 W for the board, RAM, SSDs, fans and power supply
-losses (`REST_WATTS` in `switcher/app.py`); only a smart plug measures it exactly. The CPU's
-power comes from `homelab-cpu-power.service` (RAPL is readable by root only), which
-`root-setup.sh` installs: on a box set up before, rerun `./setup.sh` once. Below that: the
-models (switch, stop, open), the other services, the API, power and lighting.
+`http://<name>.local` (and `:8005`), in two columns:
+
+- **GPU**: what has it now (ready, answering, loading; up for how long; when the idle stop
+  comes), or while switching the steps (free the GPU, start the container, load the model)
+  with a timer. Below, a card per service with a Use button: chat models (API and web
+  chat), SwarmUI (images) and Ollama (web chat, always running; "Make room" stops whatever
+  has the GPU so its models load right away). Then the API (connect) and the other services.
+- **Box**: GPU, CPU, memory and power, each kind of number with its own look: memory as a
+  bar (video memory per GB), load as a graph of the last 3 minutes, temperature on a
+  cool-to-hot scale, power split into GPU, CPU and the rest. Then power buttons and lighting.
+
+The total power is an estimate: GPU and CPU as measured, plus about 35 W for the board, RAM,
+SSDs, fans and power supply losses (`REST_WATTS` in `switcher/app.py`); only a smart plug
+measures it exactly. The CPU's power comes from `homelab-cpu-power.service` (RAPL is readable
+by root only), which `root-setup.sh` installs: on a box set up before, rerun `./setup.sh`
+once. On a phone it's one column, the box's numbers right after the GPU.
 
 ## Switch
 
