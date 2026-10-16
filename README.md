@@ -1,11 +1,15 @@
 # homelab-agent
 
-Turn a cheap used mini PC into an always-on AI agent server. The reference box is a €70
-Shuttle DS61 (Intel i5-3475S, 8 GB RAM) from a classifieds site.
+It started as a cheap used mini PC turned into an always-on AI agent server: the reference
+box is a €70 Shuttle DS61 (Intel i5-3475S, 8 GB RAM) from a classifieds site. It hosts the
+agent, its memory, its tools and everything around it, 24/7.
 
-The agent's model runs in the cloud (your OpenAI/Anthropic/OpenRouter account, or a local model
-if you have the hardware). The box hosts the agent, its memory, its tools and everything around
-it, 24/7.
+Now a second stack runs next to it: a homelabbed AI server with an NVIDIA GPU (the reference
+box: RTX 5060 Ti 16 GB, Ryzen 7 3700X, 64 GB RAM). It runs the models locally (Qwen3.8-27B,
+Qwen3.8-Flash-Next, image generation, Ollama for the web chat) behind one OpenAI-compatible
+API and a page to switch between them, so the agent can use a local model instead of the
+cloud (your OpenAI/Anthropic/OpenRouter account still works). Both boxes come from this repo,
+each with its own config (see [More than one server](#more-than-one-server)).
 
 Every service except Caddy is optional (see [Modules](#modules)):
 
