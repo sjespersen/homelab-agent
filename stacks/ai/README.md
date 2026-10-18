@@ -190,6 +190,19 @@ models). SwarmUI fetches text encoders and VAEs itself on first use.
 7. **Export for Resolve**: a zip with the clips in order, `timeline.edl` (File > Import >
    Timeline, then point it at the clips folder) and the prompts. Finish (4K, grade) in Resolve.
 
+Measured on the RTX 5060 Ti 16 GB with 64 GB RAM, for one 6.6-second 16:9 shot (once the models
+are loaded; switching the GPU between Qwen and SwarmUI adds a minute or more):
+
+| Step | Time | Peak VRAM / RAM |
+|---|---|---|
+| Still (Krea 2 + identity LoRA) | ~50 s | — |
+| Preview (736×416) | 1½ min | 15.8 / 11 GB |
+| Final (1344×768) | 5½ min | 15.6 / 18 GB |
+| Upscale (1920×1080, SeedVR2) | 10 min | — |
+| Rewrite for H3 (Strata) | 3 min, mostly loading Strata | — / 55 GB |
+
+So a finished minute of film is roughly 2½ hours of GPU time after you approve the previews.
+
 Jobs run one at a time, grouped by kind so models load less often. The Studio asks the switcher
 for the GPU (Qwen for the shot list and rewrites, SwarmUI for the rest) and holds it while it works:
 switching on the Local AI page is off until the queue is empty or you press Stop.
