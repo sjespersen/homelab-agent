@@ -194,7 +194,7 @@ models). SwarmUI fetches text encoders and VAEs itself on first use.
    Timeline, then point it at the clips folder) and the prompts. Finish (4K, grade) in Resolve.
 
 Measured on the RTX 5060 Ti 16 GB with 64 GB RAM, for one 6.6-second 16:9 shot (once the models
-are loaded; switching the GPU between Qwen and SwarmUI adds a minute or more):
+are loaded; switching the GPU between Qwen and SwarmUI adds under a minute):
 
 | Step | Time | Peak VRAM / RAM |
 |---|---|---|
@@ -202,7 +202,7 @@ are loaded; switching the GPU between Qwen and SwarmUI adds a minute or more):
 | Preview (736×416) | 1½ min | 15.8 / 11 GB |
 | Final (1344×768) | 5½ min | 15.6 / 18 GB |
 | Upscale (1920×1080, SeedVR2) | 10 min | — |
-| Rewrite for H3 (Strata) | 3 min, mostly loading Strata | — / 55 GB |
+| Rewrite for H3 (Strata) | ~1 min after a 44 s switch from SwarmUI | — / 55 GB |
 
 So a finished minute of film is roughly 2½ hours of GPU time after you approve the previews.
 
