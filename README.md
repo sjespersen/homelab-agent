@@ -295,8 +295,8 @@ every boot); keep the box somewhere it won't walk off.
   published; only Open WebUI reaches it.
 - The local AI key can also suspend, restart or shut down the box (the Local AI page's power buttons).
   A root service runs those three actions and nothing else.
-- With `WAKE_TARGETS` set, Hermes can wake those devices (and only those: the MACs come from
-  the config). A prompt injection could wake them too; it can't do more than that through this.
+- With `WAKE_TARGETS` set, Hermes can wake those devices (and only those: the MACs and wake URLs
+  come from the config). A prompt injection could wake them too; it can't do more than that through this.
 - With `WAKE_ON_LAN_IFACE` set, anything on the LAN can wake the box with a magic packet. That's
   harmless by itself, but a box woken that way is up with all its services.
 - The LED switch (ai module, `AI_LEDS=yes`) runs a root service whenever
@@ -381,7 +381,10 @@ Revoke access any time by deleting the deploy key on GitHub.
 Set `WAKE_TARGETS="gpubox=aa:bb:cc:dd:ee:ff"` (name=MAC, space-separated) and run `./deploy.sh`.
 Hermes gets a `wake-device` skill: it writes a name to `/opt/data/wake/request`, and a small
 user service on the host (`hermes-wake.path`, no root) sends the Wake-on-LAN packet, since
-broadcasts from Hermes' container don't leave its Docker network. Ask it on Telegram or WhatsApp
+broadcasts from Hermes' container don't leave its Docker network. A device that wakes some other
+way can have a URL instead of a MAC (`laptop=http://buddy.local/api/wake`): the host POSTs to it,
+e.g. a USB keyboard gadget plugged into that computer (`extras/usb-wake`, or an ESP32-S3 doing
+the same). Ask it on Telegram or WhatsApp
 to "wake the gpubox". The other computer has to allow Wake-on-LAN (see `extras/wake-on-lan`).
 
 ## Extras

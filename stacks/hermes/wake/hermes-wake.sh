@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
-# Wakes a device by Wake-on-LAN when Hermes asks: Hermes writes a device name to
-# data/wake/request; this sends the magic packet as a broadcast from the host (a container's
-# broadcasts stay in its Docker network) and writes the outcome to data/wake/result. Only the
-# devices in WAKE_TARGETS ("name=mac ...", from the config) can be woken.
+# Wakes a device when Hermes asks: Hermes writes a device name to data/wake/request; this sends
+# the Wake-on-LAN magic packet as a broadcast from the host (a container's broadcasts stay in its
+# Docker network), or POSTs to the device's wake URL (e.g. a USB keyboard gadget plugged into it,
+# reached by its .local name, which the container can't resolve), and writes the outcome to
+# data/wake/result. Only the devices in WAKE_TARGETS ("name=mac name=url ...", from the config)
+# can be woken.
 # Runs as your user from hermes-wake.service (systemd --user), started by hermes-wake.path.
 #   hermes-wake.sh <hermes stack dir> <WAKE_TARGETS>
 set -uo pipefail
@@ -16,6 +18,14 @@ mac=""
 for t in $targets; do
   [[ ${t%%=*} == "$name" ]] && mac=${t#*=}
 done
+if [[ $mac =~ ^https?://[A-Za-z0-9.:/_-]+$ ]]; then
+  if out=$(curl -fsS -m 10 -X POST "$mac" 2>&1); then
+    echo "$(date -Is) asked $name to wake up ($mac): ${out//$'\n'/ }" >"$dir/result"
+  else
+    echo "$(date -Is) couldn't reach $name's wake URL ($mac): ${out//$'\n'/ }" >"$dir/result"
+  fi
+  exit 0
+fi
 if [[ ! $mac =~ ^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$ ]]; then
   known=$(for t in $targets; do printf '%s ' "${t%%=*}"; done)
   echo "$(date -Is) unknown device '$name' (known: ${known% })" >"$dir/result"

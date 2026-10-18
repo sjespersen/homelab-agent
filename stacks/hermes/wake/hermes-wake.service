@@ -1,5 +1,5 @@
 [Unit]
-Description=Wake a device by Wake-on-LAN when Hermes asks
+Description=Wake a device when Hermes asks
 
 [Service]
 Type=oneshot

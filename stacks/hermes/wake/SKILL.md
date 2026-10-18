@@ -1,6 +1,6 @@
 ---
 name: wake-device
-description: Wake a sleeping or switched-off computer on the home network (Wake-on-LAN).
+description: Wake a sleeping or switched-off computer on the home network (Wake-on-LAN or a wake URL).
 version: 1.0.0
 author: homelab-agent
 license: MIT
@@ -16,8 +16,8 @@ metadata:
 Use this when the user asks to wake, start or turn on one of these devices, or when a task needs
 one of them and it doesn't answer: @NAMES@.
 
-The magic packet has to come from the server itself (broadcasts from this container don't reach
-the network), so ask the host to send it:
+The wake-up has to come from the server itself (broadcasts from this container don't reach the
+network, and it can't resolve .local names), so ask the host to send it:
 
 ```sh
 echo <name> > /opt/data/wake/request
@@ -25,7 +25,7 @@ sleep 3
 cat /opt/data/wake/result
 ```
 
-The result line says whether the packet was sent, or that the name is unknown.
+The result line says whether the wake-up was sent, or that the name is unknown.
 
 Then wait for the device: about 10 seconds from sleep, about 30-60 seconds from off. If you
 know a web address on it, check with `curl -s -o /dev/null -w '%{http_code}\n' <url>` until it
