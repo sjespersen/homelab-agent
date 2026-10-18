@@ -1,0 +1,10 @@
+# The Studio checks the switcher's login itself; the login page is the switcher's.
+handle /_ai/* {
+	reverse_proxy 127.0.0.1:8079
+}
+handle {
+	reverse_proxy 127.0.0.1:8078
+}
+handle_errors 502 {
+	respond "The Studio isn't running: ./deploy.sh on your computer." 502
+}

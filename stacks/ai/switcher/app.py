@@ -68,6 +68,9 @@ HOP_HEADERS = {"connection", "keep-alive", "proxy-authenticate", "proxy-authoriz
                "trailer", "transfer-encoding", "upgrade", "host", "content-length"}
 
 switching = {"to": None, "error": None}
+# A hold on the GPU (the Studio while it renders): switching from the page is refused until it
+# ends, so a click doesn't stop a batch halfway. The holder renews it; it lapses by itself.
+hold = {"by": None, "until": 0}
 lock = threading.Lock()
 # API requests in flight per service, and when the API or the GPU was last busy. A switch for
 # a request waits until the other service has no requests left. "waiting" counts requests
@@ -667,7 +670,8 @@ class Handler(BaseHTTPRequestHandler):
                               "rest_watts": REST_WATTS, "switching": switching["to"],
                               "error": switching["error"], "leds": leds(),
                               "idle_minutes": IDLE_MINUTES, "idle_stop": activity["idle_stop"],
-                              "requests": activity["waiting"], "now": time.time()})
+                              "requests": activity["waiting"], "now": time.time(),
+                              "hold": hold["by"] if time.time() < hold["until"] else None})
         self.send(404, "not found")
 
     def do_DELETE(self):
@@ -746,11 +750,23 @@ class Handler(BaseHTTPRequestHandler):
             with open(POWER_FILE, "w") as f:
                 f.write(action + "\n")
             return self.json({"power": action}, 202)
+        if url.path == "/_ai/api/hold":
+            try:
+                req = json.loads(raw or "{}")
+                seconds = max(0, min(600, int(req.get("seconds", 0))))
+                by = str(req.get("by") or "something")[:40]
+            except (ValueError, TypeError, AttributeError):
+                return self.json({"error": "bad request"}, 400)
+            hold.update(by=by if seconds else None, until=time.time() + seconds if seconds else 0)
+            return self.json({"hold": hold["by"], "until": hold["until"]})
         if url.path == "/_ai/api/switch":
             try:
-                target = json.loads(raw or "{}").get("service", "")
-            except ValueError:
+                req = json.loads(raw or "{}")
+                target = req.get("service", "")
+            except (ValueError, AttributeError):
                 return self.json({"error": "bad request"}, 400)
+            if hold["by"] and time.time() < hold["until"] and not req.get("force"):
+                return self.json({"error": f"{hold['by']} is using the GPU; stop it there first"}, 409)
             if not lock.acquire(blocking=False):
                 return self.json({"error": f"already switching to {switching['to']}"}, 409)
             switching["to"] = target
@@ -832,6 +848,9 @@ small { font-size: .62em; font-weight: 500; color: var(--muted); }
 .steps li.done { color:var(--accent); } .steps li.done::before { background:currentColor; box-shadow: inset 0 0 0 3px var(--card); }
 .steps li.doing { color:var(--warn); font-weight:600; }
 .steps li.doing::before { border-top-color:transparent; animation: spin .9s linear infinite; }
+
+.held-note { background:var(--warn-soft); color:var(--warn); border-radius:9px; padding:7px 11px; margin-bottom:10px; font-size:12px; font-weight:600; }
+.held .now button, .held .choice button { opacity:.45; pointer-events:none; }
 
 /* The choices */
 .choices { display:grid; gap:8px; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
@@ -998,6 +1017,7 @@ PAGE = """<!doctype html><html><head><meta charset="utf-8">
   <div class="col">
     <section class="card">
       <div class="card-head"><h2>GPU</h2><span class="hint">One at a time · a model picked in the web chat or the API switches by itself</span></div>
+      <div class="held-note" id="hold" hidden></div>
       <div id="now"></div>
       <div class="choices" id="choices"></div>
     </section>
@@ -1041,13 +1061,14 @@ const ICONS = {
   shield: '<path d="M12 3l8 3v6c0 4.5-3.4 8-8 9-4.6-1-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/>',
   flow: '<rect x="3" y="4" width="6" height="6" rx="1.5"/><rect x="15" y="14" width="6" height="6" rx="1.5"/><path d="M9 7h3a3 3 0 0 1 3 3v4"/>',
   agent: '<rect x="4" y="7" width="16" height="12" rx="3"/><path d="M12 3v4M9 12v1.5M15 12v1.5M9.5 16h5"/>',
+  film: '<rect x="3" y="6" width="12" height="12" rx="2"/><path d="M15 10.5l6-3.5v10l-6-3.5"/>',
   grid: '<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/>',
 };
 // The services' look, by module (and site, for the ai module's own sites).
 const SERVICE_LOOK = {
   'ai/swarm': ['image', 'var(--image)'], 'ai/chat': ['chat', 'var(--web)'],
   'uptime-kuma': ['pulse', 'var(--accent)'], 'beszel': ['bars', 'var(--orange)'], 'pihole': ['shield', 'var(--red)'],
-  'n8n': ['flow', 'var(--pink)'], 'hermes': ['agent', 'var(--teal)'],
+  'n8n': ['flow', 'var(--pink)'], 'hermes': ['agent', 'var(--teal)'], 'ai/studio': ['film', 'var(--image)'],
 };
 const icon = n => `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">${ICONS[n]}</svg>`;
 let LINKS = [];
@@ -1111,7 +1132,7 @@ setInterval(tick, 1000);
 const FAV = document.getElementById('favicon').href;
 function favicon(dot) {
   const el = document.getElementById('favicon');
-  const href = dot ? FAV.replace('%3C/svg%3E', '').replace(/<\/svg>$/, '')
+  const href = dot ? FAV.replace('%3C/svg%3E', '').replace(/<\\/svg>$/, '')
     + `<circle cx='25' cy='25' r='6.5' fill='${dot.replace('#', '%23')}' stroke='%23121211' stroke-width='2'/></svg>` : FAV;
   if (el.href !== href) el.href = href;
 }
@@ -1290,6 +1311,9 @@ async function load() {
     : holder ? `<span class="state on">● ${esc(holder.title)}${holder.always_on ? ' (' + esc(shortName(holder.loaded[0])) + ')' : ''} has the GPU</span>`
     : 'The GPU is free';
   favicon(d.switching ? '#e3b350' : holder ? '#72e09e' : '');
+  document.body.classList.toggle('held', !!d.hold);
+  document.getElementById('hold').textContent = d.hold ? `${d.hold} is using the GPU: switching is off until it's done.` : '';
+  document.getElementById('hold').hidden = !d.hold;
   setHTML('now', nowCard(d, svcs));
   setHTML('choices', svcs.map(s => choice(s, d)).join(''));
   setHTML('vitals', vitals(d));

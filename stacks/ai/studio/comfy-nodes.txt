@@ -1,0 +1,8 @@
+# ComfyUI node packs the Studio needs, pinned to a commit. before-up.sh puts them into
+# SwarmUI's ComfyUI (custom_nodes) once SwarmUI's installer has set ComfyUI up. Both were read
+# before pinning: no network calls, no subprocesses, no installs at runtime. Move a pin only
+# after reading the diff.
+#
+# name                                     repository                                                      commit
+comfyui-krea2edit                          https://github.com/lbouaraba/comfyui-krea2edit                   13ef60f20828949becada815d3cbc371eb5ccaab
+Comfyui_Minimax_h3_latent_Upscaler-Plus    https://github.com/xmarre/Comfyui_Minimax_h3_latent_Upscaler-Plus 1ddcc33e9b674aaabbccc3808fe36e1a47bdd36d

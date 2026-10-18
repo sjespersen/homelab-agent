@@ -20,7 +20,7 @@ Every service except Caddy is optional (see [Modules](#modules)):
 | [Pi-hole](https://pi-hole.net) | `pihole.home.arpa` | DNS with ad and tracker blocking; also serves the `*.home.arpa` names |
 | [Uptime Kuma](https://github.com/louislam/uptime-kuma) | `status.home.arpa` | Uptime checks and alerts |
 | [Beszel](https://beszel.dev) | `server.home.arpa` | CPU, RAM, disk, temperatures, fans, per-container stats |
-| Local AI ([llama.cpp](https://github.com/ggml-org/llama.cpp), [Strata](https://github.com/Niko1221/Strata), [SwarmUI](https://github.com/mcmonkeyprojects/SwarmUI), [Open WebUI](https://github.com/open-webui/open-webui), [Ollama](https://github.com/ollama/ollama)) | `ai.home.arpa`, `<server>:8005`; `swarm.home.arpa`, `<server>:8006`; `chat.home.arpa`, `<server>:8007` | Qwen3.8-27B, Qwen3.8-Flash-Next or image generation on an NVIDIA GPU, a page to switch, OpenAI-compatible API. Opt-in |
+| Local AI ([llama.cpp](https://github.com/ggml-org/llama.cpp), [Strata](https://github.com/Niko1221/Strata), [SwarmUI](https://github.com/mcmonkeyprojects/SwarmUI), [Open WebUI](https://github.com/open-webui/open-webui), [Ollama](https://github.com/ollama/ollama)) | `ai.home.arpa`, `<server>:8005`; `swarm.home.arpa`, `<server>:8006`; `chat.home.arpa`, `<server>:8007`; `studio.home.arpa`, `<server>:8008` | Qwen3.8-27B, Qwen3.8-Flash-Next or image generation on an NVIDIA GPU, a page to switch, OpenAI-compatible API, and a Studio that turns a brief into video shots (Krea 2, MiniMax H3, SeedVR2). Opt-in |
 | [Caddy](https://caddyserver.com) | port 80 | Gives every service a name; landing page at `http://<name>.local` (with the ai module: the Local AI page, which links to the rest) |
 | [Tailscale](https://tailscale.com) | — | Reach everything from anywhere, no open ports |
 | [restic](https://restic.net) | — | Nightly encrypted backups, pulled to your Mac |
@@ -192,6 +192,11 @@ agent) gets a lot. Read this before you put anything valuable on the box.
   counter (RAPL) stays root-only, since fine-grained readings can leak secrets; a root service
   passes only whole watts every 2 seconds to the page. The switcher reaches Docker through a
   proxy that only lists, starts and stops containers, on an internal network nothing else is on.
+- The Studio (ai module, port 8008, via Caddy) checks the same login itself (the switcher's
+  cookie or the key) and reaches ComfyUI only through SwarmUI on the stack's network. Reference
+  photos must be PNG, JPEG or WebP (checked by their first bytes, 25 MB at most) and are stored
+  under names the Studio makes up; it serves renders only by those names, so a request can't
+  reach other files.
 - The USB wake Pi (`extras/usb-wake`) answers `/api/wake` without a login to anyone on the
   LAN; it can only wake the box or tap Shift, not type anything else.
 - Hermes pushes to GitHub with per-repo deploy keys, not your account.
@@ -258,9 +263,12 @@ single-maintainer project built from a git tag on the box and run as root in its
 with page-locked memory: a tag that gets moved, or a bad release, runs on your GPU box.
 SwarmUI is built the same way, and installs ComfyUI and Python packages at runtime, unpinned;
 every ComfyUI custom node or SwarmUI extension you add runs code with access to its container
-(your images and the models disk).
+(your images and the models disk). The Studio adds two community node packs
+(`stacks/ai/studio/comfy-nodes.txt`): pinned to a commit, read before pinning (no network
+calls, subprocesses or installs at runtime), put in place by `before-up.sh`.
 *Reduce it:* update monthly; read the release notes for Hermes, n8n, Strata and SwarmUI before
-committing new pins or tags; install only custom nodes and extensions from well-known authors.
+committing new pins or tags, and the diff before moving a node pack's pin; install only custom
+nodes and extensions from well-known authors.
 
 **8. Secrets at rest.** Ubuntu's default install has no disk encryption, so whoever takes the
 box gets every key and session on it. Secrets also sit in plain files under `/opt/stacks`
@@ -273,8 +281,10 @@ every boot); keep the box somewhere it won't walk off.
 - Hermes' API on port 8642 gives full agent access to anyone with the key on `TRUSTED_NETS` or
   the tailnet. Treat that key like a password.
 - The local AI key (`/opt/stacks/ai/data/.env`) travels in plain HTTP on the LAN like the logins
-  in 5. Whoever has it can use the chat models, switch services, and use SwarmUI, including
-  installing extensions there (see 7). It also signs the login cookie: change the key to sign
+  in 5. Whoever has it can use the chat models, switch services, use SwarmUI, including
+  installing extensions there (see 7), and the Studio (its projects, photos and renders; it can
+  also hold the GPU, which turns off switching on the Local AI page for up to 10 minutes at a
+  time). It also signs the login cookie: change the key to sign
   everyone out.
 - Model files from Hugging Face or Civitai can carry code: prefer `.safetensors` and `.gguf`
   over `.ckpt`/`.pt` files.
@@ -283,7 +293,7 @@ every boot); keep the box somewhere it won't walk off.
   tailnet could. Its admin can download models and add Open WebUI "functions" and "tools",
   which run Python inside its container (with the AI API key in its environment). Ollama isn't
   published; only Open WebUI reaches it.
-- The local AI key can also suspend, restart or shut down the box (the switcher's Power card).
+- The local AI key can also suspend, restart or shut down the box (the Local AI page's power buttons).
   A root service runs those three actions and nothing else.
 - With `WAKE_TARGETS` set, Hermes can wake those devices (and only those: the MACs come from
   the config). A prompt injection could wake them too; it can't do more than that through this.

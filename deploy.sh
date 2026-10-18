@@ -30,7 +30,7 @@ if [[ ${1:-} == --update ]]; then
 fi
 
 # The server gets its own config as config.env, and no other server's.
-rsync -a --delete --exclude .git --exclude mac --include config.example.env --exclude 'config*.env' \
+rsync -a --delete --exclude .git --exclude __pycache__ --exclude mac --include config.example.env --exclude 'config*.env' \
   ./ "$host:homelab-agent/"
 rsync -a "$config" "$host:homelab-agent/config.env"
 ssh "$host" "PULL=$pull bash ~/homelab-agent/install.sh"

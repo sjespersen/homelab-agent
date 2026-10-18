@@ -1,0 +1,482 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Studio</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%237b4bb0'/><rect x='6' y='9' width='14' height='14' rx='2.5' fill='none' stroke='white' stroke-width='2.2'/><path d='M20 14l6-3.5v11L20 18' fill='none' stroke='white' stroke-width='2.2' stroke-linejoin='round'/></svg>">
+<style>
+:root { --bg:#f4f4f1; --card:#fff; --ink:#1c1c1a; --muted:#6b6b64; --faint:#9a9a92; --line:#e4e4de;
+  --soft:#efefea; --accent:#7b4bb0; --accent-soft:#eee5f7; --on-accent:#fff; --good:#2f6f4f; --good-soft:#e3efe8;
+  --warn:#a36f00; --warn-soft:#f7ecd2; --bad:#b03a3a; --bad-soft:#f6e1e1; --blue:#2f62a3; --blue-soft:#e2eaf6;
+  color-scheme: light; }
+@media (prefers-color-scheme: dark) { :root { --bg:#121211; --card:#1b1b19; --ink:#ecece7; --muted:#a0a098;
+  --faint:#77776f; --line:#2e2e2a; --soft:#262623; --accent:#bd96ea; --accent-soft:#2d2240; --on-accent:#1b1030;
+  --good:#72c296; --good-soft:#1d3127; --warn:#e3b350; --warn-soft:#3a2f17; --bad:#e57b7b; --bad-soft:#3b2020;
+  --blue:#7fa9e6; --blue-soft:#1c2a3e; color-scheme: dark; } }
+* { box-sizing:border-box; }
+[hidden] { display:none !important; }
+body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+main { max-width:1280px; margin:0 auto; padding:14px 16px 40px; }
+a { color:inherit; }
+h1 { font-size:18px; margin:0; letter-spacing:-.01em; }
+h2 { font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.07em; color:var(--muted); margin:0; }
+.ic { width:16px; height:16px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; flex-shrink:0; }
+.top { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom:12px; }
+.brand { display:flex; align-items:center; gap:10px; min-width:0; }
+.logo { width:32px; height:32px; border-radius:9px; background:#7b4bb0; color:#fff; display:grid; place-items:center; flex-shrink:0; }
+.logo .ic { width:20px; height:20px; }
+.sub { color:var(--muted); font-size:12px; }
+.card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px 14px; }
+.card-head { display:flex; justify-content:space-between; align-items:center; gap:10px; flex-wrap:wrap; margin-bottom:10px; }
+button, .btn { font:inherit; font-size:13px; padding:5px 11px; border-radius:7px; border:1px solid var(--line);
+  background:var(--card); color:var(--ink); cursor:pointer; text-decoration:none; display:inline-flex;
+  align-items:center; gap:6px; white-space:nowrap; }
+button:hover:not(:disabled), .btn:hover { border-color:var(--faint); }
+button.primary { background:var(--accent); border-color:var(--accent); color:var(--on-accent); font-weight:500; }
+button.good { background:var(--good); border-color:var(--good); color:var(--card); }
+button.small { font-size:12px; padding:3px 9px; }
+button:disabled, .btn.disabled { opacity:.45; cursor:default; pointer-events:none; }
+button.confirm { background:var(--bad); border-color:var(--bad); color:#fff; }
+input, textarea, select { font:inherit; font-size:13px; color:var(--ink); background:var(--bg); border:1px solid var(--line);
+  border-radius:7px; padding:6px 8px; width:100%; }
+textarea { resize:vertical; min-height:60px; line-height:1.4; }
+input:focus, textarea:focus, select:focus { outline:2px solid color-mix(in srgb, var(--accent) 40%, transparent); outline-offset:0; }
+label { font-size:11px; color:var(--muted); display:block; margin:8px 0 3px; }
+.row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+.grow { flex:1; min-width:0; }
+.hint { color:var(--faint); font-size:12px; }
+.banner { border-radius:9px; padding:8px 12px; margin-bottom:12px; font-size:13px; }
+.banner.bad { background:var(--bad-soft); color:var(--bad); } .banner.warn { background:var(--warn-soft); color:var(--warn); }
+.pill { display:inline-flex; align-items:center; gap:5px; font-size:11px; font-weight:500; padding:1px 8px; border-radius:999px;
+  background:var(--soft); color:var(--muted); white-space:nowrap; }
+.pill.good { background:var(--good-soft); color:var(--good); } .pill.warn { background:var(--warn-soft); color:var(--warn); }
+.pill.bad { background:var(--bad-soft); color:var(--bad); } .pill.accent { background:var(--accent-soft); color:var(--accent); }
+.pill.blue { background:var(--blue-soft); color:var(--blue); }
+.layout { display:grid; grid-template-columns: 340px minmax(0, 1fr); gap:12px; align-items:start; }
+.side { display:grid; gap:12px; position:sticky; top:12px; }
+@media (max-width: 980px) { .layout { grid-template-columns: 1fr; } .side { position:static; } }
+
+/* Running job */
+.job { display:flex; align-items:center; gap:10px; font-size:12px; color:var(--muted); }
+.job .spin { width:12px; height:12px; border-radius:50%; border:2px solid var(--warn); border-top-color:transparent; animation:spin .9s linear infinite; }
+@keyframes spin { to { transform:rotate(360deg); } }
+.job b { color:var(--ink); font-weight:600; font-variant-numeric: tabular-nums; }
+
+/* Characters */
+.chars { display:grid; gap:8px; }
+.char { display:grid; grid-template-columns: 64px 1fr; gap:10px; padding:8px; border:1px solid var(--line); border-radius:10px; }
+.photo { width:64px; height:80px; border-radius:8px; background:var(--soft) center/cover no-repeat; border:1.5px dashed var(--line);
+  display:grid; place-items:center; color:var(--faint); cursor:pointer; font-size:10px; text-align:center; position:relative; }
+.photo.has { border-style:solid; color:transparent; }
+.photo.drag { border-color:var(--accent); background-color:var(--accent-soft); }
+.char input { padding:4px 6px; font-weight:600; }
+.char textarea { min-height:38px; font-size:12px; padding:4px 6px; margin-top:4px; }
+.char .x { margin-top:4px; }
+
+/* Pipeline */
+.stages { display:grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap:6px; margin-bottom:12px; }
+.stage { border:1px solid var(--line); border-radius:10px; padding:9px 10px; background:var(--card); display:flex; flex-direction:column; gap:6px; min-width:0; }
+.stage .n { font-size:11px; color:var(--muted); display:flex; align-items:center; gap:6px; }
+.stage .n b { width:18px; height:18px; border-radius:50%; background:var(--soft); display:grid; place-items:center; font-size:10px; color:var(--ink); }
+.stage .t { font-weight:620; }
+.stage .c { font-size:12px; color:var(--muted); font-variant-numeric: tabular-nums; }
+.stage .bar { height:4px; background:var(--soft); border-radius:2px; overflow:hidden; }
+.stage .bar i { display:block; height:100%; background:var(--accent); }
+.stage button { justify-content:center; }
+@media (max-width: 760px) { .stages { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+.toolbar { display:flex; justify-content:space-between; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:8px; }
+.seg { display:inline-flex; } .seg button { border-radius:0; margin-left:-1px; }
+.seg button:first-child { border-radius:7px 0 0 7px; margin-left:0; } .seg button:last-child { border-radius:0 7px 7px 0; }
+.seg button.on { background:var(--accent-soft); color:var(--accent); border-color:color-mix(in srgb, var(--accent) 40%, var(--line)); position:relative; }
+
+/* Shots */
+.shots { display:grid; gap:10px; }
+.shot { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:10px 12px; }
+.shot.approved { border-color:color-mix(in srgb, var(--good) 55%, var(--line)); }
+.shot.running { border-color:var(--warn); box-shadow:0 0 0 1px var(--warn) inset; }
+.shot-head { display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:8px; }
+.num { font-weight:700; font-variant-numeric: tabular-nums; color:var(--faint); width:28px; }
+.shot-head input.title { font-weight:620; border-color:transparent; background:transparent; padding:3px 6px; width:auto; flex:1; min-width:140px; }
+.shot-head input.title:hover { border-color:var(--line); }
+.secs { width:64px !important; text-align:right; }
+.who { display:flex; gap:4px; flex-wrap:wrap; }
+.who button { font-size:11px; padding:1px 8px; border-radius:999px; }
+.who button.on { background:var(--blue-soft); color:var(--blue); border-color:color-mix(in srgb, var(--blue) 40%, var(--line)); }
+.media { display:grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap:8px; }
+.slot { min-width:0; }
+.slot .frame { aspect-ratio: var(--ar, 16/9); background:var(--soft); border-radius:8px; overflow:hidden; display:grid; place-items:center;
+  color:var(--faint); font-size:11px; text-align:center; position:relative; }
+.slot .frame img, .slot .frame video { width:100%; height:100%; object-fit:cover; display:block; }
+.slot .frame.busy::after { content:""; position:absolute; inset:0; background:color-mix(in srgb, var(--warn) 12%, transparent);
+  border:2px solid var(--warn); border-radius:8px; animation: pulse 1.6s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity:.4; } }
+.slot .cap { display:flex; justify-content:space-between; align-items:center; gap:6px; margin-top:4px; font-size:11px; color:var(--muted); min-height:24px; }
+.slot .cap .acts { display:flex; gap:4px; }
+.slot .cap button { font-size:11px; padding:1px 7px; }
+.prompts { display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin-top:8px; }
+.prompts textarea { min-height:84px; font-size:12px; }
+.shot details summary { cursor:pointer; font-size:12px; color:var(--muted); margin-top:6px; }
+.err { color:var(--bad); font-size:12px; margin-top:6px; }
+.review-actions { display:flex; gap:6px; }
+@media (max-width: 760px) { .media { grid-template-columns: repeat(2, minmax(0, 1fr)); } .prompts { grid-template-columns: 1fr; } }
+
+/* Review grid */
+.review { display:grid; gap:10px; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+.rcard { background:var(--card); border:1px solid var(--line); border-radius:12px; overflow:hidden; }
+.rcard video { width:100%; display:block; aspect-ratio: var(--ar, 16/9); background:#000; }
+.rcard .rb { padding:8px 10px; display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.rcard.approved { border-color:var(--good); } .rcard.rejected { opacity:.6; }
+.empty { padding:30px; text-align:center; color:var(--muted); }
+.projects { display:grid; gap:8px; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); margin-top:10px; }
+.proj { padding:12px; border:1px solid var(--line); border-radius:10px; text-decoration:none; cursor:pointer; background:var(--card); }
+.proj:hover { border-color:var(--accent); }
+.proj .t { font-weight:620; } .proj .d { color:var(--muted); font-size:12px; }
+footer { margin-top:16px; color:var(--faint); font-size:11px; }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation:none !important; } }
+</style></head>
+<body><main>
+<header class="top">
+  <div class="brand"><span class="logo"><svg class="ic" viewBox="0 0 24 24"><rect x="3" y="6" width="12" height="12" rx="2"/><path d="M15 10.5l6-3.5v10l-6-3.5"/></svg></span>
+    <div class="grow"><h1 id="title">Studio</h1><div class="sub" id="crumbs">Brief → shot list → stills → previews → review → finals → upscale → export</div></div></div>
+  <div class="row"><span class="job" id="job"></span><button class="small" id="stop" hidden>Stop</button>
+    <button class="small" id="projects-btn">Projects</button><a class="btn small" id="local-ai" href="/">Local AI</a></div>
+</header>
+<div class="banner bad" id="error" hidden></div>
+<div class="banner warn" id="missing" hidden></div>
+<div id="view"></div>
+<footer>Renders run one at a time on the GPU; the Local AI page's switching is off while they run.</footer>
+<script>
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const ICON = {
+  film: '<rect x="3" y="6" width="12" height="12" rx="2"/><path d="M15 10.5l6-3.5v10l-6-3.5"/>',
+  redo: '<path d="M20 12a8 8 0 1 1-2.4-5.7"/><path d="M20 4v4.5h-4.5"/>',
+  check: '<path d="M5 12.5l4.5 4.5L19 7.5"/>', x: '<path d="M6 6l12 12M18 6L6 18"/>',
+  up: '<path d="M12 19V5M6 11l6-6 6 6"/>', down: '<path d="M12 5v14M6 13l6 6 6-6"/>', plus: '<path d="M12 5v14M5 12h14"/>',
+  dl: '<path d="M12 4v11M7 10l5 5 5-5M5 20h14"/>', wand: '<path d="M4 20L15 9M14 4v3M20 10h-3M18 6l-2 2"/>',
+};
+const icon = n => `<svg class="ic" viewBox="0 0 24 24">${ICON[n]}</svg>`;
+let STATE = {}, P = null, mode = 'shots', OFFSET = 0;
+const KIND = {shots: 'Writing the shot list', still: 'Still', preview: 'Preview', final: 'Final', upscale: 'Upscale'};
+// The local AI page is one port down from the Studio (or ai.<domain> with Pi-hole names).
+$('local-ai').href = location.port ? `${location.protocol}//${location.hostname}:8005/`
+  : location.origin.replace('//studio.', '//ai.');
+
+async function api(method, path, body, raw) {
+  const opts = {method, headers: {}};
+  if (raw) { opts.body = raw; opts.headers['Content-Type'] = raw.type || 'application/octet-stream'; }
+  else if (body !== undefined) { opts.body = JSON.stringify(body); opts.headers['Content-Type'] = 'application/json'; }
+  const r = await fetch(path, opts);
+  if (r.status === 401) { location.href = '/_ai/login?next=' + encodeURIComponent(location.pathname + location.hash); throw new Error('login'); }
+  const d = r.headers.get('content-type')?.includes('json') ? await r.json() : await r.text();
+  if (!r.ok) { showError((d && d.error) || d || r.statusText); throw new Error('api'); }
+  showError('');
+  return d;
+}
+function showError(t) { $('error').textContent = t; $('error').hidden = !t; }
+const clock = s => { s = Math.max(0, Math.round(s)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
+const media = (s, f) => `/media/${P.id}/${s.id}/${f}`;
+
+// --- State and the running job -----------------------------------------------------------
+async function poll() {
+  try { STATE = await api('GET', '/api/state'); } catch (e) { return; }
+  OFFSET = STATE.now - Date.now() / 1000;
+  const run = STATE.running;
+  const proj = id => (STATE.projects.find(p => p.id === id) || {}).title || '';
+  const shotNo = t => P && t.project === P.id ? (P.shots.findIndex(s => s.id === t.shot) + 1) : '';
+  $('job').innerHTML = run
+    ? `<span class="spin"></span><span>${KIND[run.kind]}${run.shot ? ' · shot ' + (shotNo(run) || '?') : ''}${P && run.project === P.id ? '' : ' · ' + esc(proj(run.project))}
+       · <b data-since="${run.since}"></b>${STATE.queue.length ? ` · ${STATE.queue.length} queued` : ''}</span>`
+    : (STATE.history[0] ? `<span>Last: ${KIND[STATE.history[0].kind]} ${STATE.history[0].result}</span>` : '');
+  $('stop').hidden = !run && !STATE.queue.length;
+  const miss = STATE.missing || [];
+  $('missing').hidden = !miss.length;
+  $('missing').textContent = miss.length ? `Models missing in SwarmUI's Models folder (see the Studio part of the AI README): ${miss.join(', ')}` : '';
+  tick();
+  if (P) {
+    try { P = await api('GET', '/api/projects/' + P.id); } catch (e) { return; }
+    renderProject(false);
+  } else renderHome();
+}
+function tick() {
+  document.querySelectorAll('[data-since]').forEach(e => e.textContent = clock(Date.now() / 1000 + OFFSET - e.dataset.since));
+}
+setInterval(tick, 1000);
+$('stop').onclick = () => api('POST', '/api/stop').then(poll);
+$('projects-btn').onclick = () => { location.hash = ''; };
+window.onhashchange = route;
+async function route() {
+  const id = location.hash.slice(1);
+  if (!id) { P = null; $('title').textContent = 'Studio'; document.title = 'Studio'; $('view').innerHTML = ''; return renderHome(); }
+  try { P = await api('GET', '/api/projects/' + id); } catch (e) { location.hash = ''; return; }
+  $('view').innerHTML = ''; renderProject(true);
+}
+
+// --- Home ----------------------------------------------------------------------------------
+function renderHome() {
+  if (P || !STATE.projects) return;
+  const html = `<section class="card"><div class="card-head"><h2>Projects</h2></div>
+    <div class="row"><input id="new-title" class="grow" placeholder="New project, e.g. Anna & Jonas, wedding film" style="max-width:420px">
+    <button class="primary" id="new">${icon('plus')}New project</button></div>
+    <div class="projects">${STATE.projects.map(p => `<a class="proj" href="#${esc(p.id)}"><div class="t">${esc(p.title)}</div>
+      <div class="d">${p.shots} shots · ${new Date(p.updated * 1000).toLocaleDateString()}</div></a>`).join('')
+      || '<div class="hint">No projects yet.</div>'}</div></section>`;
+  if ($('view')._html !== html) { $('view').innerHTML = html; $('view')._html = html;
+    $('new').onclick = async () => { const p = await api('POST', '/api/projects', {title: $('new-title').value || 'Untitled'}); location.hash = p.id; };
+    $('new-title').onkeydown = e => { if (e.key === 'Enter') $('new').click(); };
+  }
+}
+
+// --- Project ---------------------------------------------------------------------------------
+const ar = () => ({'16:9': '16/9', '9:16': '9/16', '1:1': '1/1'})[P.aspect] || '16/9';
+function renderProject(first) {
+  $('title').textContent = P.title; document.title = P.title + ' · Studio';
+  $('crumbs').textContent = `${P.shots.length} shots · ${P.characters.length} characters · ${P.aspect}`;
+  if (first || !$('shots')) {
+    $('view').innerHTML = `<div class="layout"><div class="side">
+      <section class="card"><div class="card-head"><h2>Brief</h2><span class="hint">Qwen writes the shots from this</span></div>
+        <input id="p-title" value="${esc(P.title)}">
+        <label>What happens, who, where, the mood (as long as you like)</label>
+        <textarea id="p-brief" rows="9" placeholder="A wedding film for Anna and Jonas. Morning: Anna gets ready at her parents' farmhouse...">${esc(P.brief)}</textarea>
+        <div class="row" style="margin-top:6px">
+          <div><label>Format</label><select id="p-aspect">${['16:9', '9:16', '1:1'].map(a => `<option ${a === P.aspect ? 'selected' : ''}>${a}</option>`).join('')}</select></div>
+          <div><label>Shots</label><input id="p-n" type="number" min="1" max="200" value="${P.target_shots}" style="width:72px"></div>
+          <div class="grow"><label>Final pass</label><select id="p-refine">
+            <option value="standard" ${P.refine === 'standard' ? 'selected' : ''}>Standard refine</option>
+            <option value="gentle" ${P.refine === 'gentle' ? 'selected' : ''}>Gentle: closer to the preview</option></select></div></div>
+        <div class="row" style="margin-top:10px"><button class="primary" id="write">${icon('wand')}Write shot list</button>
+          <label style="margin:0;display:flex;gap:5px;align-items:center"><input type="checkbox" id="replace" style="width:auto"> replace the current shots</label></div>
+        <div class="hint" style="margin-top:6px">Uses ${esc(STATE.llm || 'Qwen')} on this box: the GPU switches to it for a few minutes.</div>
+      </section>
+      <section class="card"><div class="card-head"><h2>Characters</h2><button class="small" id="add-char">${icon('plus')}Add</button></div>
+        <div class="hint" style="margin-bottom:8px">One clear photo each, ideally showing the outfit. Drop it on the frame.</div>
+        <div class="chars" id="chars"></div></section>
+      <section class="card"><div class="card-head"><h2>Project</h2></div>
+        <div class="row"><button class="small" id="del-proj" data-label="Delete project">Delete project</button>
+        <span class="hint">Deletes the shots, photos and renders.</span></div></section>
+    </div><div>
+      <div class="stages" id="stages"></div>
+      <div class="toolbar"><div class="seg"><button data-mode="shots">Shots</button><button data-mode="review">Review previews</button></div>
+        <button class="small" id="add-shot">${icon('plus')}Add shot</button></div>
+      <div id="shots"></div>
+    </div></div>`;
+    const save = (k, v) => api('POST', `/api/projects/${P.id}/update`, {[k]: v}).then(d => { P = d; renderProject(false); });
+    $('p-title').onchange = e => save('title', e.target.value);
+    $('p-brief').onchange = e => save('brief', e.target.value);
+    $('p-aspect').onchange = e => save('aspect', e.target.value);
+    $('p-refine').onchange = e => save('refine', e.target.value);
+    $('p-n').onchange = e => save('target_shots', parseInt(e.target.value) || 12);
+    $('write').onclick = async () => {
+      await save('brief', $('p-brief').value);
+      await api('POST', `/api/projects/${P.id}/run`, {kind: 'shots', replace: $('replace').checked}); poll();
+    };
+    $('add-char').onclick = () => api('POST', `/api/projects/${P.id}/characters`, {name: 'New character'}).then(d => { P = d; renderProject(false); });
+    $('add-shot').onclick = () => api('POST', `/api/projects/${P.id}/shots`, {}).then(d => { P = d; renderProject(false); });
+    armed($('del-proj'), 'Really delete?', async () => { await api('DELETE', '/api/projects/' + P.id); location.hash = ''; });
+    document.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => { mode = b.dataset.mode; $('shots').innerHTML = ''; renderProject(false); });
+  }
+  document.querySelectorAll('[data-mode]').forEach(b => b.classList.toggle('on', b.dataset.mode === mode));
+  renderChars(); renderStages();
+  mode === 'review' ? renderReview() : renderShots();
+}
+// A button that needs a second click within 5 s (no browser dialog).
+function armed(b, text, act) {
+  b.onclick = () => {
+    if (!b.classList.contains('confirm')) {
+      b.classList.add('confirm'); b.textContent = text;
+      b.timer = setTimeout(() => { b.classList.remove('confirm'); b.textContent = b.dataset.label; }, 5000); return;
+    }
+    clearTimeout(b.timer); b.classList.remove('confirm'); b.textContent = b.dataset.label; act();
+  };
+}
+
+function renderChars() {
+  const box = $('chars');
+  const ids = P.characters.map(c => c.id).join();
+  if (box._ids !== ids) {
+    box._ids = ids;
+    box.innerHTML = P.characters.map(c => `<div class="char" data-id="${c.id}">
+      <div class="photo" title="Drop or click to choose the reference photo">photo</div>
+      <div><input class="name" value="${esc(c.name)}"><textarea class="desc" placeholder="Who they are, age, the outfit across the film">${esc(c.description)}</textarea>
+      <button class="small x" data-label="Remove">Remove</button></div></div>`).join('') || '<div class="hint">No characters: shots without people work too.</div>';
+    box.querySelectorAll('.char').forEach(el => {
+      const id = el.dataset.id, url = `/api/projects/${P.id}/characters/${id}`;
+      el.querySelector('.name').onchange = e => api('POST', url, {name: e.target.value}).then(d => { P = d; renderProject(false); });
+      el.querySelector('.desc').onchange = e => api('POST', url, {description: e.target.value}).then(d => { P = d; });
+      armed(el.querySelector('.x'), 'Really?', () => api('DELETE', url).then(d => { P = d; renderProject(false); }));
+      const ph = el.querySelector('.photo');
+      const send = f => f && api('PUT', url + '/photo', undefined, f).then(d => { P = d; renderProject(false); });
+      ph.onclick = () => { const i = document.createElement('input'); i.type = 'file'; i.accept = 'image/png,image/jpeg,image/webp';
+        i.onchange = () => send(i.files[0]); i.click(); };
+      ph.ondragover = e => { e.preventDefault(); ph.classList.add('drag'); };
+      ph.ondragleave = () => ph.classList.remove('drag');
+      ph.ondrop = e => { e.preventDefault(); ph.classList.remove('drag'); send(e.dataTransfer.files[0]); };
+    });
+  }
+  P.characters.forEach(c => {
+    const ph = box.querySelector(`.char[data-id="${c.id}"] .photo`);
+    const url = c.ref ? `/api/projects/${P.id}/refs/${c.id}?v=${encodeURIComponent(c.ref)}` : '';
+    if (ph && ph._url !== url) { ph._url = url; ph.style.backgroundImage = url ? `url("${url}")` : ''; ph.classList.toggle('has', !!url); }
+  });
+}
+
+function counts() {
+  const n = P.shots.length, c = k => P.shots.filter(k).length;
+  return {
+    still: [c(s => s.still), n], preview: [c(s => s.preview && !s.state.preview_outdated), c(s => s.still)],
+    review: [c(s => s.review === 'approved' && s.preview), c(s => s.preview)],
+    final: [c(s => s.final && !s.state.final_outdated), c(s => s.review === 'approved' && s.preview)],
+    upscale: [c(s => s.upscale && !s.state.upscale_outdated), c(s => s.final)],
+  };
+}
+const STAGES = [
+  ['still', 'Stills', 'Krea 2 + photos', 'Make missing'], ['preview', 'Previews', 'H3 · 0.3 MP', 'Render'],
+  ['review', 'Review', 'you approve', 'Open'], ['final', 'Finals', 'H3 · ~1 MP', 'Render approved'],
+  ['upscale', 'Upscale', 'SeedVR2 · 1080p', 'Upscale'],
+];
+function renderStages() {
+  const c = counts();
+  const queued = k => STATE.queue ? STATE.queue.filter(t => t.project === P.id && t.kind === k).length + ((STATE.running || {}).kind === k && STATE.running.project === P.id ? 1 : 0) : 0;
+  const html = STAGES.map(([k, t, d, b], i) => {
+    const [done, of] = c[k], q = k === 'review' ? 0 : queued(k);
+    return `<div class="stage"><div class="n"><b>${i + 1}</b>${d}</div><div class="t">${t}</div>
+      <div class="c">${done} / ${of}${q ? ` · ${q} queued` : ''}</div><div class="bar"><i style="width:${of ? 100 * done / of : 0}%"></i></div>
+      <button class="small ${k === 'review' ? '' : 'primary'}" data-stage="${k}" ${k !== 'review' && (of - done <= 0 && k !== 'still' || k === 'still' && done >= of) ? 'disabled' : ''}>${b}</button></div>`;
+  }).join('') + '';
+  if ($('stages')._html !== html) {
+    $('stages').innerHTML = html; $('stages')._html = html;
+    $('stages').querySelectorAll('[data-stage]').forEach(b => b.onclick = () => {
+      if (b.dataset.stage === 'review') { mode = 'review'; $('shots').innerHTML = ''; return renderProject(false); }
+      api('POST', `/api/projects/${P.id}/run`, {kind: b.dataset.stage}).then(poll);
+    });
+  }
+  // Export sits under the stages.
+  let ex = $('export');
+  if (!ex) { ex = document.createElement('div'); ex.id = 'export'; ex.className = 'toolbar'; $('stages').after(ex); }
+  const ready = P.shots.filter(s => s.final || s.upscale).length;
+  const exh = `<span class="hint">${ready ? `${ready} finished shot${ready > 1 ? 's' : ''}: clips, an EDL timeline for Resolve and the prompts` : 'Export: once shots have finals'}</span>
+    <a class="btn small ${ready ? '' : 'disabled'}" ${ready ? `href="/api/projects/${P.id}/export.zip"` : ''}>${icon('dl')}Export for Resolve</a>`;
+  if (ex._html !== exh) { ex.innerHTML = exh; ex._html = exh; }
+}
+
+function isRunning(s, kind) {
+  const r = STATE.running;
+  return r && r.project === P.id && r.shot === s.id && (!kind || r.kind === kind);
+}
+function isQueued(s, kind) { return (STATE.queue || []).some(t => t.project === P.id && t.shot === s.id && t.kind === kind); }
+function run(kind, s) { return api('POST', `/api/projects/${P.id}/run`, {kind, shots: [s.id]}).then(poll); }
+function patch(s, body) { return api('POST', `/api/projects/${P.id}/shots/${s.id}`, body).then(d => { P = d; renderProject(false); }); }
+
+// Shot cards: built once per shot, then only their changing parts are updated, so a playing
+// video or a prompt you're typing isn't redrawn.
+function renderShots() {
+  const box = $('shots');
+  if (!P.shots.length) { box.innerHTML = `<div class="card empty">No shots yet. Write the brief and let Qwen write the shot list, or add shots by hand.</div>`; box._ids = ''; return; }
+  const ids = P.shots.map(s => s.id).join();
+  if (box._ids !== ids || !box.firstChild || box.firstChild.classList.contains('empty')) {
+    box._ids = ids; box.className = 'shots';
+    box.innerHTML = P.shots.map(s => `<div class="shot" data-id="${s.id}" style="--ar:${ar()}"></div>`).join('');
+  }
+  P.shots.forEach((s, i) => updateShot(box.querySelector(`.shot[data-id="${s.id}"]`), s, i));
+}
+function slot(name, cls) { return `<div class="slot ${cls}"><div class="frame">${name}</div><div class="cap"><span class="st"></span><span class="acts"></span></div></div>`; }
+function updateShot(el, s, i) {
+  if (!el._built) {
+    el._built = true;
+    el.innerHTML = `<div class="shot-head"><span class="num"></span><input class="title"><div class="who"></div>
+      <span class="hint">seconds</span><input class="secs" type="number" min="4" max="15">
+      <span class="pill rv"></span>
+      <button class="small up" title="Move up">${icon('up')}</button><button class="small down" title="Move down">${icon('down')}</button>
+      <button class="small del" data-label="Delete">Delete</button></div>
+      <div class="media">${slot('No still yet', 's-still')}${slot('No preview yet', 's-preview')}${slot('Not approved yet', 's-final')}${slot('No upscale yet', 's-upscale')}</div>
+      <details><summary>Prompts</summary><div class="prompts">
+        <div><label>Still (first frame, Krea 2)</label><textarea class="sp"></textarea></div>
+        <div><label>Motion and sound (MiniMax H3)</label><textarea class="mp"></textarea></div></div></details>
+      <div class="err" hidden></div>`;
+    el.querySelector('.title').onchange = e => patch(s, {title: e.target.value});
+    el.querySelector('.secs').onchange = e => patch(s, {seconds: parseInt(e.target.value) || 6});
+    el.querySelector('.sp').onchange = e => patch(s, {still_prompt: e.target.value});
+    el.querySelector('.mp').onchange = e => patch(s, {motion_prompt: e.target.value});
+    el.querySelector('.up').onclick = () => patch(s, {move: Math.max(0, P.shots.findIndex(x => x.id === s.id) - 1)});
+    el.querySelector('.down').onclick = () => patch(s, {move: P.shots.findIndex(x => x.id === s.id) + 1});
+    armed(el.querySelector('.del'), 'Really?', () => api('DELETE', `/api/projects/${P.id}/shots/${s.id}`).then(d => { P = d; renderProject(false); }));
+    if (!P.shots.some(x => x.still_prompt || x.motion_prompt) || !s.still) el.querySelector('details').open = true;
+  }
+  const set = (sel, v) => { const x = el.querySelector(sel); if (x !== document.activeElement && x.value !== String(v)) x.value = v; };
+  el.querySelector('.num').textContent = i + 1;
+  set('.title', s.title); set('.secs', s.seconds); set('.sp', s.still_prompt); set('.mp', s.motion_prompt);
+  const who = P.characters.map(c => `<button class="${s.characters.includes(c.id) ? 'on' : ''}" data-c="${c.id}">${esc(c.name)}</button>`).join('');
+  const w = el.querySelector('.who');
+  if (w._html !== who) { w._html = who; w.innerHTML = who;
+    w.querySelectorAll('button').forEach(b => b.onclick = () => {
+      const cur = P.shots.find(x => x.id === s.id).characters, c = b.dataset.c;
+      patch(s, {characters: cur.includes(c) ? cur.filter(x => x !== c) : [...cur, c]});
+    }); }
+  const rv = el.querySelector('.rv');
+  rv.textContent = !s.preview ? 'no preview' : s.review === 'approved' ? 'approved' : s.review === 'rejected' ? 'rejected' : 'to review';
+  rv.className = 'pill rv ' + (s.review === 'approved' && s.preview ? 'good' : s.review === 'rejected' ? 'bad' : s.preview ? 'warn' : '');
+  el.classList.toggle('approved', s.review === 'approved' && !!s.preview);
+  el.classList.toggle('running', !!isRunning(s));
+  const err = el.querySelector('.err'); err.hidden = !s.error; err.textContent = s.error || '';
+
+  const st = s.state;
+  fill(el.querySelector('.s-still'), s, 'still', s.still && `<img src="${media(s, s.still.file)}" alt="">`,
+    s.still ? `seed ${s.still.seed} · ${s.still.took}s` : '', [['redo', s.still ? 'New still' : 'Make', () => run('still', s)]]);
+  fill(el.querySelector('.s-preview'), s, 'preview', s.preview && `<video src="${media(s, s.preview.file)}" controls loop playsinline preload="metadata"></video>`,
+    s.preview ? (st.preview_outdated ? (st.prompt_changed ? 'prompt changed' : 'new still since') : `${s.preview.took}s`) : '',
+    [...(s.preview ? [['check', s.review === 'approved' ? 'Approved' : 'Approve', () => patch(s, {review: s.review === 'approved' ? 'pending' : 'approved'}), s.review === 'approved']] : []),
+     ['redo', s.preview ? 'Retry' : 'Render', () => run('preview', s), false, !s.still]]);
+  fill(el.querySelector('.s-final'), s, 'final', s.final && `<video src="${media(s, s.final.file)}" controls loop playsinline preload="metadata"></video>`,
+    s.final ? (st.final_outdated ? 'older preview' : `${s.final.took}s`) : '',
+    [['redo', s.final ? 'Again' : 'Render', () => run('final', s), false, !(s.review === 'approved' && s.preview && !st.preview_outdated)]]);
+  fill(el.querySelector('.s-upscale'), s, 'upscale', s.upscale && `<video src="${media(s, s.upscale.file)}" controls loop playsinline preload="metadata"></video>`,
+    s.upscale ? (st.upscale_outdated ? 'older final' : `${s.upscale.took}s`) : '',
+    [['redo', s.upscale ? 'Again' : 'Upscale', () => run('upscale', s), false, !s.final]]);
+}
+function fill(slotEl, s, kind, html, caption, actions) {
+  const frame = slotEl.querySelector('.frame');
+  const key = html || '';
+  if (frame.dataset.empty === undefined) frame.dataset.empty = frame.textContent;
+  if (frame._key !== key) { frame._key = key; frame.innerHTML = html || esc(frame.dataset.empty); }
+  frame.classList.toggle('busy', !!isRunning(s, kind));
+  const q = isQueued(s, kind), r = isRunning(s, kind);
+  const cap = r ? 'rendering…' : q ? 'queued' : caption;
+  const stEl = slotEl.querySelector('.st'); if (stEl.textContent !== cap) stEl.textContent = cap;
+  const acts = actions.map(([ic, label, , on, off]) => `<button class="small ${on ? 'good' : ''}" ${off || r || q ? 'disabled' : ''}>${icon(ic)}${label}</button>`).join('');
+  const a = slotEl.querySelector('.acts');
+  if (a._html !== acts) { a._html = acts; a.innerHTML = acts; a.querySelectorAll('button').forEach((b, i) => b.onclick = actions[i][2]); }
+}
+
+// The review grid: every preview big, approve / retry / reject.
+function renderReview() {
+  const box = $('shots');
+  const list = P.shots.filter(s => s.preview);
+  const ids = list.map(s => s.id + s.preview.file).join();
+  if (box._ids !== 'r' + ids) {
+    box._ids = 'r' + ids; box.className = 'review';
+    box.innerHTML = list.map((s, i) => `<div class="rcard" data-id="${s.id}" style="--ar:${ar()}">
+      <video src="${media(s, s.preview.file)}" controls loop playsinline preload="metadata"></video>
+      <div class="rb"><div class="grow"><b>${P.shots.indexOf(s) + 1}</b> ${esc(s.title)}<div class="hint st"></div></div>
+      <div class="review-actions"><button class="small rj" title="Reject">${icon('x')}</button>
+      <button class="small rt" title="Retry with a new seed">${icon('redo')}</button>
+      <button class="small ok">${icon('check')}Approve</button></div></div></div>`).join('')
+      || '<div class="card empty">No previews yet: render them in step 2.</div>';
+    box.querySelectorAll('.rcard').forEach(el => {
+      const s = () => P.shots.find(x => x.id === el.dataset.id);
+      el.querySelector('.ok').onclick = () => patch(s(), {review: s().review === 'approved' ? 'pending' : 'approved'});
+      el.querySelector('.rj').onclick = () => patch(s(), {review: 'rejected'});
+      el.querySelector('.rt').onclick = () => run('preview', s());
+    });
+  }
+  list.forEach(s => {
+    const el = box.querySelector(`.rcard[data-id="${s.id}"]`); if (!el) return;
+    el.classList.toggle('approved', s.review === 'approved'); el.classList.toggle('rejected', s.review === 'rejected');
+    const ok = el.querySelector('.ok'); ok.classList.toggle('good', s.review === 'approved');
+    ok.lastChild.textContent = s.review === 'approved' ? 'Approved' : 'Approve';
+    const t = isRunning(s, 'preview') ? 'rendering a new one…' : isQueued(s, 'preview') ? 'new one queued' :
+      s.state.preview_outdated ? 'outdated: the still or prompt changed' : `${s.seconds}s · seed ${s.preview.seed}`;
+    const st = el.querySelector('.st'); if (st.textContent !== t) st.textContent = t;
+  });
+}
+
+route().then(poll); setInterval(poll, 3000);
+</script></main></body></html>

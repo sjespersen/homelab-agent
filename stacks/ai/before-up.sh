@@ -16,13 +16,27 @@ fi
 
 # Docker would create missing bind-mount folders as root; the containers run as you.
 models=$(sed -n 's/^AI_MODELS_DIR="\(.*\)"$/\1/p' .env)
-mkdir -p data/switcher data/swarm/{Data,Output,CustomWorkflows} data/webchat
-for sub in llama.cpp strata ollama swarm/Models swarm/dlbackend swarm/DLNodes swarm/Extensions; do
+mkdir -p data/switcher data/swarm/{Data,Output,CustomWorkflows} data/webchat data/studio
+for sub in llama.cpp strata ollama studio swarm/Models swarm/dlbackend swarm/DLNodes swarm/Extensions; do
   [[ -d $models/$sub ]] || mkdir -p "$models/$sub" || {
     echo "Can't create $models/$sub: run bootstrap.sh (./setup.sh) first, it prepares $models." >&2
     exit 1
   }
 done
+
+# The Studio's ComfyUI node packs (studio/comfy-nodes.txt), at their pinned commits. ComfyUI
+# exists once SwarmUI's installer ran; until then there's nothing to put them in.
+nodes=$models/swarm/dlbackend/ComfyUI/custom_nodes
+if [[ -d $nodes ]]; then
+  while read -r name repo commit; do
+    [[ -n $name && $name != \#* ]] || continue
+    [[ $(git -C "$nodes/$name" rev-parse HEAD 2>/dev/null) != "$commit" ]] || continue
+    echo "ComfyUI node pack $name at ${commit:0:7}"
+    [[ -d $nodes/$name/.git ]] || git clone -q "$repo" "$nodes/$name"
+    git -C "$nodes/$name" fetch -q origin "$commit"
+    git -C "$nodes/$name" -c advice.detachedHead=false checkout -q "$commit"
+  done <studio/comfy-nodes.txt
+fi
 
 # Open WebUI reaches the 27B and Strata through the switcher, with the API key.
 key=$(sed -n 's/^API_KEY=//p' data/.env)
@@ -30,12 +44,15 @@ key=$(sed -n 's/^API_KEY=//p' data/.env)
 
 # The switcher's code is mounted, not part of its image: a hash of it in .env (a label in
 # compose.yaml) makes compose recreate the container when the code changed.
-code=$(cat switcher/*.py | sha256sum | cut -c1-16)
-if grep -q '^SWITCHER_CODE=' .env; then
-  sed -i "s/^SWITCHER_CODE=.*/SWITCHER_CODE=\"$code\"/" .env
-else
-  echo "SWITCHER_CODE=\"$code\"" >>.env
-fi
+for app in switcher studio; do
+  var=$(tr '[:lower:]' '[:upper:]' <<<"$app")_CODE
+  code=$(find "$app" -maxdepth 1 -type f | sort | xargs cat | sha256sum | cut -c1-16)
+  if grep -q "^$var=" .env; then
+    sed -i "s/^$var=.*/$var=\"$code\"/" .env
+  else
+    echo "$var=\"$code\"" >>.env
+  fi
+done
 
 # Which service gets the GPU: the last one picked in the switcher (or ./ai-model.sh), else
 # AI_MODEL from the config; "none" after Stop. compose up starts only that one

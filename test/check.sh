@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Renders config.example.env with several MODULES combinations and checks that every compose
 # file parses and (when Docker is running) that Caddy accepts its config. Also checks that
-# every image is pinned by digest, and that the AI switcher page scripts parse. CI runs this.
+# every image is pinned by digest, and that the AI switcher's and Studio's page scripts parse.
+# CI runs this.
 set -euo pipefail
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 tmp=$(mktemp -d)
@@ -30,6 +31,10 @@ PY
     docker run --rm -v "$tmp:/s:ro" node:22-alpine node --check "/s/$page.js" \
       || { echo "The switcher's $page script doesn't parse." >&2; exit 1; }
   done
+  python3 -c 'import re, sys; print(re.findall(r"<script>(.*?)</script>", open(sys.argv[1]).read(), re.S)[0])' \
+    "$repo/stacks/ai/studio/page.html" >"$tmp/studio.js"
+  docker run --rm -v "$tmp:/s:ro" node:22-alpine node --check /s/studio.js \
+    || { echo "The Studio page's script doesn't parse." >&2; exit 1; }
 fi
 
 combos=(

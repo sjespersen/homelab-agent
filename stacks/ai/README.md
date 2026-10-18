@@ -18,6 +18,7 @@ also suspend, restart or shut down the box.
 | `http://<name>.local:8005/v1` | `ai.<DOMAIN>/v1` | OpenAI-compatible API of the chat models; it starts the one a request names (Strata also has `/v1/messages`) |
 | `http://<name>.local:8006` | `swarm.<DOMAIN>` | SwarmUI |
 | `http://<name>.local:8007` | `chat.<DOMAIN>` | Open WebUI: web chat for all models, downloads Ollama models |
+| `http://<name>.local:8008` | `studio.<DOMAIN>` | The Studio: a brief to video shots, see [Studio](#studio) |
 
 The switcher and SwarmUI ask for the AI API key once per browser; the API takes it as a Bearer
 token. It's `API_KEY` in `/opt/stacks/ai/data/.env` on the server.
@@ -162,6 +163,50 @@ models). SwarmUI fetches text encoders and VAEs itself on first use.
 - **Krea 2 Turbo** (fp8, 13 GB, [Comfy-Org/Krea-2](https://huggingface.co/Comfy-Org/Krea-2)) runs
   on a 16 GB card: 8 steps, CFG 1, about 14 s per 1024x1024 image on an RTX 50 card with 16 GB.
   It needs SwarmUI newer than 0.9.8-Beta (the pinned commit has it).
+
+## Studio
+
+`http://<name>.local:8008`: from a brief to finished video shots, on this box.
+
+1. **Brief and characters.** Describe the film, and give each recurring person one clear photo
+   (ideally showing the outfit). **Write shot list** has Qwen (`AI_STUDIO_LLM`) turn it into
+   shots: a still prompt (the first frame) and a motion-and-sound prompt per shot. Edit any of
+   it, or add shots by hand.
+2. **Stills**: Krea 2 Turbo makes each shot's first frame at the final size. With characters in
+   the shot it uses the [Krea 2 Identity Edit V2](https://huggingface.co/conradlocke/krea2-identity-edit)
+   LoRA with their photos: one pass per person, each later pass adding the next person to the
+   picture so far.
+3. **Previews**: MiniMax H3 animates the still at ~0.3 MP (736×416 for 16:9), with sound.
+4. **Review**: approve, retry (a new seed) or reject each preview; only approved ones go on.
+5. **Finals**: the approved preview again (same seed, frame and prompt, so the same motion),
+   its latent upscaled by a learned H3 upscaler and refined at H3's full size (1344×768; H3
+   doesn't go past 768×1344). "Gentle" in the brief's settings keeps closer to the preview.
+6. **Upscale**: SeedVR2 3B to 1080p, in chunks so it fits 16 GB.
+7. **Export for Resolve**: a zip with the clips in order, `timeline.edl` (File > Import >
+   Timeline, then point it at the clips folder) and the prompts. Finish (4K, grade) in Resolve.
+
+Jobs run one at a time, grouped by kind so models load less often. The Studio asks the switcher
+for the GPU (Qwen for the shot list, SwarmUI for the rest) and holds it while it works:
+switching on the Local AI page is off until the queue is empty or you press Stop.
+
+**Models** (in SwarmUI's `Models` folder; the page lists what's missing). Hugging Face's CDN
+stalls over IPv6 on some networks, so download with `curl -4 -L -C -`:
+
+| File | Folder | From |
+|---|---|---|
+| `krea2_turbo_fp8_scaled`, `qwen3vl_4b`, `QwenImage/qwen_image_vae` | `diffusion_models`, `text_encoders`, `VAE` | SwarmUI fetches the last two the first time you use Krea 2 in it; the first from [Comfy-Org/Krea-2](https://huggingface.co/Comfy-Org/Krea-2) |
+| `krea2_identity_edit_v2` | `Lora` | [conradlocke/krea2-identity-edit](https://huggingface.co/conradlocke/krea2-identity-edit) |
+| `minimax_h3_fl2va_pruned_w6a8`, `qwen3vl_32b_minimax_h3_nvfp4_awq`, `minimax_h3_video_vae_int8_convrot`, `minimax_h3_audio_vae_fp32`, `minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16` | `diffusion_models`, `text_encoders`, `VAE`, `VAE`, `Lora` | [Comfy-Org/MiniMax-H3](https://huggingface.co/Comfy-Org/MiniMax-H3) |
+| `minimax_h3_latent_upscaler_3d_conv_v1_bf16` | `latent_upscale_models` | [LBH-123-AI/Minimax_h3_latent_Upscaler](https://huggingface.co/LBH-123-AI/Minimax_h3_latent_Upscaler) |
+| `seedvr2_3b_int8_convrot`, `seedvr2_ema_vae_fp16` | `diffusion_models`, `VAE` | [Comfy-Org/SeedVR2](https://huggingface.co/Comfy-Org/SeedVR2) |
+
+Two ComfyUI node packs come with it, pinned in `studio/comfy-nodes.txt` (deploys put them in
+place): [comfyui-krea2edit](https://github.com/lbouaraba/comfyui-krea2edit) for the identity
+LoRA, and [the H3 latent upscaler](https://github.com/xmarre/Comfyui_Minimax_h3_latent_Upscaler-Plus).
+
+**Licenses.** MiniMax H3's license excludes the US, UK, EU and South Korea unless MiniMax
+authorizes you (apply on their H3 license page; keep their email). The identity LoRA is free
+for personal, non-commercial use only. The H3 upscaler's repository has no license.
 
 ## Use the chat models
 

@@ -322,6 +322,34 @@ services:
               capabilities: [gpu]
     restart: unless-stopped
 
+  # The Studio: brief -> shot list (Qwen) -> stills (Krea 2) -> previews and finals (MiniMax H3)
+  # -> upscale (SeedVR2) -> export for Resolve, on SwarmUI's ComfyUI. No GPU of its own: it asks
+  # the switcher for it. Projects in data/studio (backed up), renders on the models disk.
+  studio:
+    image: python:3.13-slim@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f  # 3.13.16
+    container_name: ai-studio
+    labels:
+      homelab.studio.code: "${STUDIO_CODE:-}"   # like the switcher's: a deploy restarts it on new code
+    user: "${PUID}:${PGID}"
+    command: ["python", "/app/app.py"]
+    env_file:
+      - path: ./data/.env   # API_KEY: the switcher's API and its login cookie
+        required: false
+    environment:
+      COMFY_URL: http://swarmui:7801/ComfyBackendDirect
+      SWITCHER: http://switcher:8079
+      STUDIO_LLM: "${AI_STUDIO_LLM}"
+    ports:
+      - "127.0.0.1:8078:8078"
+    volumes:
+      - ./studio:/app:ro
+      - ./data/studio:/data
+      - ${AI_MODELS_DIR}/studio:/media
+      - ${AI_MODELS_DIR}/swarm/Models:/models:ro   # only to see which models are there
+    read_only: true
+    cap_drop: [ALL]
+    restart: unless-stopped
+
   # The switcher's only way to Docker: list and inspect containers, start and stop them.
   # Nothing that creates containers, runs commands in them or reads their files.
   socket-proxy:
