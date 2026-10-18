@@ -27,6 +27,14 @@ MODEL_FILES = {
     SEEDVR2_UNET: "diffusion_models", SEEDVR2_VAE: "VAE",
 }
 
+# Which files each step needs.
+NEEDS = {
+    "still": [KREA_UNET, KREA_CLIP, KREA_VAE, KREA_IDENTITY],
+    "preview": [H3_UNET, H3_CLIP, H3_VAE, H3_AUDIO_VAE, H3_TURBO],
+    "final": [H3_UNET, H3_CLIP, H3_VAE, H3_AUDIO_VAE, H3_TURBO, H3_UPSCALER],
+    "upscale": [SEEDVR2_UNET, SEEDVR2_VAE],
+}
+
 # Sizes per aspect: the still and the final at H3's canvas (768 short edge, 768x1344 at most),
 # the preview at ~0.3 MP. All multiples of 32.
 SIZES = {

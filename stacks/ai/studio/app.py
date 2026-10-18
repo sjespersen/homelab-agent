@@ -458,8 +458,9 @@ def public(p):
     return out
 
 
-def missing_models():
-    return [name for name, folder in wf.MODEL_FILES.items() if not os.path.exists(os.path.join(MODELS, folder, name))]
+def missing_models(kind=None):
+    names = wf.NEEDS.get(kind, []) if kind else wf.MODEL_FILES
+    return [n for n in names if not os.path.exists(os.path.join(MODELS, wf.MODEL_FILES[n], n))]
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -759,8 +760,8 @@ class Handler(BaseHTTPRequestHandler):
                     return self.json({"error": "unknown job"}, 400)
                 if kind == "shots" and not p["brief"].strip():
                     return self.json({"error": "write the brief first"}, 400)
-                if kind != "shots" and missing_models():
-                    return self.json({"error": "models missing: " + ", ".join(missing_models())}, 409)
+                if missing_models(kind):
+                    return self.json({"error": "models missing: " + ", ".join(missing_models(kind))}, 409)
                 shots = req.get("shots", "all")
                 added = enqueue(p, kind, shots if isinstance(shots, list) else "all", bool(req.get("replace")))
                 return self.json({"queued": added})
