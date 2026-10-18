@@ -169,7 +169,8 @@ models). SwarmUI fetches text encoders and VAEs itself on first use.
 `http://<name>.local:8008`: from a brief to finished video shots, on this box.
 
 1. **Brief and characters.** Describe the film, and give each recurring person one clear photo
-   (ideally showing the outfit). **Write shot list** has Qwen (`AI_STUDIO_LLM`) turn it into
+   (showing the outfit, on a plain background: the photo's background leaks into the stills
+   otherwise). **Write shot list** has Qwen (`AI_STUDIO_LLM`) turn it into
    shots: a still prompt (the first frame) and a motion-and-sound prompt per shot. Edit any of
    it, or add shots by hand.
 2. **Stills**: Krea 2 Turbo makes each shot's first frame at the final size. With characters in
