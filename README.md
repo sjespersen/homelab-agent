@@ -192,6 +192,8 @@ agent) gets a lot. Read this before you put anything valuable on the box.
   counter (RAPL) stays root-only, since fine-grained readings can leak secrets; a root service
   passes only whole watts every 2 seconds to the page. The switcher reaches Docker through a
   proxy that only lists, starts and stops containers, on an internal network nothing else is on.
+- The USB wake Pi (`extras/usb-wake`) answers `/api/wake` without a login to anyone on the
+  LAN; it can only wake the box or tap Shift, not type anything else.
 - Hermes pushes to GitHub with per-repo deploy keys, not your account.
 - The Mac's backup key can only read the backup folder (`rrsync -ro`).
 - Backups are encrypted with restic.
@@ -380,6 +382,8 @@ to "wake the gpubox". The other computer has to allow Wake-on-LAN (see `extras/w
   See its README.
 - `extras/wake-on-lan/`: wakes the box over the network from suspend or off (`WAKE_ON_LAN_*`).
   See its README.
+- `extras/usb-wake/`: wakes the box from suspend with a Pi Zero plugged in as a USB keyboard,
+  also on Wi-Fi (`USB_WAKE_*`). See its README.
 
 ## Not covered
 

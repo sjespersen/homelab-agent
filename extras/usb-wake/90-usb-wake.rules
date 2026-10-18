@@ -1,0 +1,2 @@
+# Lets the wake keyboard (a Pi in USB gadget mode, see README.md) wake the box from suspend.
+ACTION=="add", SUBSYSTEM=="usb", ENV{DEVTYPE}=="usb_device", ATTR{idVendor}=="@VID@", ATTR{idProduct}=="@PID@", RUN+="/usr/local/sbin/usb-wake-path /sys%p"

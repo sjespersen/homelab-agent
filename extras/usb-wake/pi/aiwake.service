@@ -1,0 +1,12 @@
+[Unit]
+Description=aiwake HTTP wake service (POST /api/wake)
+After=aiwake-gadget.service network-online.target
+Requires=aiwake-gadget.service
+
+[Service]
+ExecStart=/usr/bin/python3 /usr/local/bin/aiwake.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

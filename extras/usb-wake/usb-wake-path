@@ -1,0 +1,8 @@
+#!/bin/sh
+# Allows wakeup on a USB device and every hub and PCIe bridge between it and the CPU (root hubs
+# and the X570 chipset bridges come with it off, and the wake signal never arrives).
+p=$1
+while [ "$p" != /sys/devices ] && [ "$p" != / ]; do
+  [ -w "$p/power/wakeup" ] && echo enabled >"$p/power/wakeup"
+  p=$(dirname "$p")
+done

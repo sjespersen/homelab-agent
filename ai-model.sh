@@ -6,7 +6,7 @@
 #   ./ai-model.sh swarmui    SwarmUI (image generation)
 #   ./ai-model.sh stop       no model on the GPU (frees Strata's RAM too)
 #   ./ai-model.sh leds off   case LEDs off (or on; needs AI_LEDS=yes)
-#   ./ai-model.sh wake       wake the box after suspend or shutdown (WAKE_ON_LAN_*)
+#   ./ai-model.sh wake       wake the box after suspend or shutdown (USB_WAKE_* or WAKE_ON_LAN_*)
 # With several servers: CONFIG=config.ai.env ./ai-model.sh strata
 set -euo pipefail
 repo="$(cd "$(dirname "$0")" && pwd)"
@@ -38,8 +38,17 @@ if d["error"]:
     print("error:", d["error"])'
 }
 
+if [[ ${1:-} == wake && -n ${USB_WAKE_URL:-} ]]; then
+  # A wake keyboard on the box's USB (extras/usb-wake) does it; works over Wi-Fi too.
+  if [[ -n ${USB_WAKE_VIA:-} ]]; then
+    ssh "$USB_WAKE_VIA" "curl -fsS -m 10 -X POST '$USB_WAKE_URL/api/wake'"
+  else
+    curl -fsS -m 10 -X POST "$USB_WAKE_URL/api/wake"
+  fi
+  exit
+fi
 if [[ ${1:-} == wake ]]; then
-  [[ -n ${WAKE_ON_LAN_MAC:-} ]] || { echo "Set WAKE_ON_LAN_MAC in $config_file." >&2; exit 1; }
+  [[ -n ${WAKE_ON_LAN_MAC:-} ]] || { echo "Set WAKE_ON_LAN_MAC or USB_WAKE_URL in $config_file." >&2; exit 1; }
   # The magic packet: 6 x FF, then the MAC 16 times, as a UDP broadcast to port 9.
   send='import socket, sys
 mac = bytes.fromhex(sys.argv[1].replace(":", ""))
