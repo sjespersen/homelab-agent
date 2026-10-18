@@ -172,7 +172,11 @@ models). SwarmUI fetches text encoders and VAEs itself on first use.
    (showing the outfit, on a plain background: the photo's background leaks into the stills
    otherwise). **Write shot list** has Qwen (`AI_STUDIO_LLM`) turn it into
    shots: a still prompt (the first frame) and a motion-and-sound prompt per shot. Edit any of
-   it, or add shots by hand.
+   it, or add shots by hand. Motion prompts follow H3's own format (`integrated_multimodal_description`,
+   `overall_soundscape`, `non_diegetic_music`; the Studio adds the first-frame line): Qwen gets
+   MiniMax's [H3 prompt-writing guide](https://github.com/MiniMax-AI/MiniMax-H3/tree/main/skills/h3-prompt-writing)
+   with the brief. **Rewrite for H3** on a shot (or **Rewrite prompts for H3** for all that
+   aren't in the format yet) turns a prompt you wrote in plain words into that format.
 2. **Stills**: Krea 2 Turbo makes each shot's first frame at the final size. With characters in
    the shot it uses the [Krea 2 Identity Edit V2](https://huggingface.co/conradlocke/krea2-identity-edit)
    LoRA with their photos: one pass per person, each later pass adding the next person to the
@@ -187,7 +191,7 @@ models). SwarmUI fetches text encoders and VAEs itself on first use.
    Timeline, then point it at the clips folder) and the prompts. Finish (4K, grade) in Resolve.
 
 Jobs run one at a time, grouped by kind so models load less often. The Studio asks the switcher
-for the GPU (Qwen for the shot list, SwarmUI for the rest) and holds it while it works:
+for the GPU (Qwen for the shot list and rewrites, SwarmUI for the rest) and holds it while it works:
 switching on the Local AI page is off until the queue is empty or you press Stop.
 
 **Models** (in SwarmUI's `Models` folder; the page lists what's missing). Hugging Face's CDN
@@ -203,11 +207,13 @@ stalls over IPv6 on some networks, so download with `curl -4 -L -C -`:
 
 Two ComfyUI node packs come with it, pinned in `studio/comfy-nodes.txt` (deploys put them in
 place): [comfyui-krea2edit](https://github.com/lbouaraba/comfyui-krea2edit) for the identity
-LoRA, and [the H3 latent upscaler](https://github.com/xmarre/Comfyui_Minimax_h3_latent_Upscaler-Plus).
+LoRA, and [the H3 latent upscaler](https://github.com/xmarre/Comfyui_Minimax_h3_latent_Upscaler-Plus). Deploys also fetch MiniMax's
+prompt guide (`references/base-en.txt`, pinned to a commit and checked by hash) into
+`data/studio/`; without it, Qwen still writes the format from a short summary.
 
 **Licenses.** MiniMax H3's license excludes the US, UK, EU and South Korea unless MiniMax
 authorizes you (apply on their H3 license page; keep their email). The identity LoRA is free
-for personal, non-commercial use only. The H3 upscaler's repository has no license.
+for personal, non-commercial use only. The H3 upscaler's repository and MiniMax's H3 repository (the prompt guide) have no license; that's why the guide is fetched, not kept here.
 
 ## Use the chat models
 

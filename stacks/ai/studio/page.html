@@ -114,6 +114,8 @@ label { font-size:11px; color:var(--muted); display:block; margin:8px 0 3px; }
 .slot .cap button { font-size:11px; padding:1px 7px; }
 .prompts { display:grid; grid-template-columns: 1fr 1fr; gap:8px; margin-top:8px; }
 .prompts textarea { min-height:84px; font-size:12px; }
+.mp-head { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.mp-head .small { padding:2px 8px; font-size:11px; }
 .shot details summary { cursor:pointer; font-size:12px; color:var(--muted); margin-top:6px; }
 .err { color:var(--bad); font-size:12px; margin-top:6px; }
 .review-actions { display:flex; gap:6px; }
@@ -256,6 +258,7 @@ function renderProject(first) {
     </div><div>
       <div class="stages" id="stages"></div>
       <div class="toolbar"><div class="seg"><button data-mode="shots">Shots</button><button data-mode="review">Review previews</button></div>
+        <button class="small" id="rewrite-all" title="Qwen rewrites every motion prompt that isn't in H3's format yet, with MiniMax's prompt guide">Rewrite prompts for H3</button>
         <button class="small" id="add-shot">${icon('plus')}Add shot</button></div>
       <div id="shots"></div>
     </div></div>`;
@@ -270,6 +273,7 @@ function renderProject(first) {
       await api('POST', `/api/projects/${P.id}/run`, {kind: 'shots', replace: $('replace').checked}); poll();
     };
     $('add-char').onclick = () => api('POST', `/api/projects/${P.id}/characters`, {name: 'New character'}).then(d => { P = d; renderProject(false); });
+    $('rewrite-all').onclick = () => api('POST', `/api/projects/${P.id}/run`, {kind: 'prompt'}).then(poll);
     $('add-shot').onclick = () => api('POST', `/api/projects/${P.id}/shots`, {}).then(d => { P = d; renderProject(false); });
     armed($('del-proj'), 'Really delete?', async () => { await api('DELETE', '/api/projects/' + P.id); location.hash = ''; });
     document.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => { mode = b.dataset.mode; $('shots').innerHTML = ''; renderProject(false); });
@@ -390,12 +394,13 @@ function updateShot(el, s, i) {
       <div class="media">${slot('No still yet', 's-still')}${slot('No preview yet', 's-preview')}${slot('Not approved yet', 's-final')}${slot('No upscale yet', 's-upscale')}</div>
       <details><summary>Prompts</summary><div class="prompts">
         <div><label>Still (first frame, Krea 2)</label><textarea class="sp"></textarea></div>
-        <div><label>Motion and sound (MiniMax H3)</label><textarea class="mp"></textarea></div></div></details>
+        <div><label class="mp-head">Motion and sound (MiniMax H3)<button class="small rw" title="Qwen rewrites this prompt in H3's format, with MiniMax's prompt guide; keeps what it says">Rewrite for H3</button></label><textarea class="mp"></textarea></div></div></details>
       <div class="err" hidden></div>`;
     el.querySelector('.title').onchange = e => patch(s, {title: e.target.value});
     el.querySelector('.secs').onchange = e => patch(s, {seconds: parseInt(e.target.value) || 6});
     el.querySelector('.sp').onchange = e => patch(s, {still_prompt: e.target.value});
     el.querySelector('.mp').onchange = e => patch(s, {motion_prompt: e.target.value});
+    el.querySelector('.rw').onclick = () => run('prompt', P.shots.find(x => x.id === s.id) || s);
     el.querySelector('.up').onclick = () => patch(s, {move: Math.max(0, P.shots.findIndex(x => x.id === s.id) - 1)});
     el.querySelector('.down').onclick = () => patch(s, {move: P.shots.findIndex(x => x.id === s.id) + 1});
     armed(el.querySelector('.del'), 'Really?', () => api('DELETE', `/api/projects/${P.id}/shots/${s.id}`).then(d => { P = d; renderProject(false); }));
@@ -404,6 +409,8 @@ function updateShot(el, s, i) {
   const set = (sel, v) => { const x = el.querySelector(sel); if (x !== document.activeElement && x.value !== String(v)) x.value = v; };
   el.querySelector('.num').textContent = i + 1;
   set('.title', s.title); set('.secs', s.seconds); set('.sp', s.still_prompt); set('.mp', s.motion_prompt);
+  const rw = el.querySelector('.rw'), rwBusy = isRunning(s, 'prompt') || isQueued(s, 'prompt');
+  rw.disabled = !!rwBusy; rw.textContent = isRunning(s, 'prompt') ? 'Rewriting…' : rwBusy ? 'Queued' : 'Rewrite for H3';
   const who = P.characters.map(c => `<button class="${s.characters.includes(c.id) ? 'on' : ''}" data-c="${c.id}">${esc(c.name)}</button>`).join('');
   const w = el.querySelector('.who');
   if (w._html !== who) { w._html = who; w.innerHTML = who;

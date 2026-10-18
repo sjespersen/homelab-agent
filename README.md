@@ -265,7 +265,9 @@ SwarmUI is built the same way, and installs ComfyUI and Python packages at runti
 every ComfyUI custom node or SwarmUI extension you add runs code with access to its container
 (your images and the models disk). The Studio adds two community node packs
 (`stacks/ai/studio/comfy-nodes.txt`): pinned to a commit, read before pinning (no network
-calls, subprocesses or installs at runtime), put in place by `before-up.sh`.
+calls, subprocesses or installs at runtime), put in place by `before-up.sh`. It also fetches
+MiniMax's H3 prompt guide, a text file that goes into Qwen's prompt: pinned to a commit and
+checked against its SHA-256, so a changed file is refused rather than fed to the model.
 *Reduce it:* update monthly; read the release notes for Hermes, n8n, Strata and SwarmUI before
 committing new pins or tags, and the diff before moving a node pack's pin; install only custom
 nodes and extensions from well-known authors.

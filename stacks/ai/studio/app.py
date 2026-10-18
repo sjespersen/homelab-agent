@@ -40,7 +40,7 @@ SESSION = hmac.new(API_KEY.encode(), b"ai-switcher-session", hashlib.sha256).hex
 COOKIE = "ai_session"
 MAX_UPLOAD = 25 * 1024 * 1024
 ID = re.compile(r"^[a-z0-9-]{1,48}$")
-KINDS = ("shots", "still", "preview", "final", "upscale")
+KINDS = ("shots", "prompt", "still", "preview", "final", "upscale")
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 lock = threading.RLock()       # the projects and the queue
@@ -119,6 +119,8 @@ def shot_state(s):
 def wanted(p, kind, s):
     """Whether a batch run of `kind` should do this shot."""
     st = shot_state(s)
+    if kind == "prompt":
+        return not in_h3_format(s["motion_prompt"])
     if kind == "still":
         return not st["has_still"]
     if kind == "preview":
@@ -213,28 +215,54 @@ Answer with JSON only, no other text:
 {"shots": [{"title": "...", "characters": ["exact character names in the shot"], "seconds": 5-12,
   "still_prompt": "...", "motion_prompt": "..."}]}
 
-Write motion_prompt like this (English, one shot, no hard cuts unless the brief asks for them):
-<one line: look and mood, lens, light>
-
-Timeline:
-[0s-2s] <what moves, who does what>
-[2s-5s] <...>
-(cover the whole length in 2-4 steps; describe the camera: static, slow push-in, handheld follow, ...)
-
-Audio: <ambience, sounds, music; dialogue in quotes with who says it, if any>
-
 Rules: keep each character looking the same across shots (same outfit unless the brief changes it); vary the framing (wide, medium, close-up); keep motion simple and physical; no on-screen text unless asked.
 """
 
+REWRITE_PROMPT = """You rewrite one shot's motion prompt for MiniMax H3, a video model with sound. You get what the shot's first frame shows, its length and a draft motion prompt (plain words, or an older format). Keep the draft's intent: the action, the camera, any dialogue word for word, the sounds and music. Fill in what's missing so it fits the first frame and the length.
 
-def write_shots(p, replace):
+Answer with the three fields only, no other text.
+"""
+
+MOTION_FORMAT = """Write each motion prompt in MiniMax H3's I2VA format (a clip that starts from a given first frame), but leave out the first-line instruction: the pipeline adds it. Only the three core fields, in this order, separated by a blank line:
+
+integrated_multimodal_description: [Shot 1] <style and composition as in the first frame, then what moves along the timeline>
+
+overall_soundscape: <1-4 sentences>
+
+non_diegetic_music: <1-3 sentences, or N/A>
+
+The first frame is <Picture 1> at 0.00 seconds. Use a single [Shot 1] unless the brief asks for cuts; a cut time must fall inside the shot's length. Describe the camera as motion type + amplitude + speed. Give people who speak an ID like (S1) and put their words in <d>[English] ...</d>. Write in English.
+"""
+
+# The first line of an H3 prompt that starts from a given first frame (I2VA, in MiniMax's
+# prompt guide). The Studio adds it, so the prompts on the page are just the three fields.
+I2VA = "For the target video, at 0.00 seconds into the target video, <Picture 1> (from [Shot 1]) is fully referenced."
+GUIDE = os.path.join(DATA, "h3-prompt-guide.txt")  # fetched by before-up.sh
+
+
+def h3_prompt(motion):
+    m = motion.strip()
+    return m if m.startswith(("For the target video", "How the reference")) else f"{I2VA}\n\n{m}"
+
+
+def with_guide(system):
+    """The system prompt plus the motion format and, when it's there, MiniMax's whole guide."""
+    try:
+        with open(GUIDE, encoding="utf-8") as f:
+            guide = f.read()
+    except OSError:
+        guide = ""
+    out = system + "\n" + MOTION_FORMAT
+    if guide:
+        out += ("\nMiniMax's H3 prompt-writing guide follows. Use its I2VA mode; the cases show finished prompts."
+                f"\n\n<guide>\n{guide}\n</guide>\n")
+    return out
+
+
+def llm(system, user):
     gpu_for(llm_service(), lambda: True, LLM_MODEL)
-    chars = "\n".join(f"- {c['name']}: {c.get('description') or '(no description)'}"
-                      for c in p["characters"]) or "(none: no recurring people)"
-    user = (f"Brief:\n{p['brief']}\n\nCharacters (use these exact names):\n{chars}\n\n"
-            f"Format: {p['aspect']}. About {p['target_shots']} shots.")
     body = {"model": LLM_MODEL, "max_tokens": 30000, "temperature": 0.7,
-            "messages": [{"role": "system", "content": SHOT_PROMPT}, {"role": "user", "content": user}],
+            "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
             "reasoning_effort": "medium", "chat_template_kwargs": {"reasoning_effort": "medium"}}
     req = urllib.request.Request(SWITCHER + "/v1/chat/completions", data=json.dumps(body).encode(), method="POST",
                                  headers={"Authorization": "Bearer " + API_KEY, "Content-Type": "application/json"})
@@ -243,7 +271,15 @@ def write_shots(p, replace):
             answer = json.loads(r.read())
     except urllib.error.HTTPError as e:
         raise RuntimeError(f"{LLM_MODEL}: HTTP {e.code} {e.read()[:300].decode(errors='replace')}") from None
-    text = answer["choices"][0]["message"].get("content") or ""
+    return answer["choices"][0]["message"].get("content") or ""
+
+
+def write_shots(p, replace):
+    chars = "\n".join(f"- {c['name']}: {c.get('description') or '(no description)'}"
+                      for c in p["characters"]) or "(none: no recurring people)"
+    user = (f"Brief:\n{p['brief']}\n\nCharacters (use these exact names):\n{chars}\n\n"
+            f"Format: {p['aspect']}. About {p['target_shots']} shots.")
+    text = llm(with_guide(SHOT_PROMPT), user)
     start, end = text.find("{"), text.rfind("}")
     try:
         shots = json.loads(text[start:end + 1])["shots"]
@@ -268,6 +304,28 @@ def write_shots(p, replace):
         else:
             p["shots"].extend(out)
         log(p, f"{LLM_MODEL} wrote {len(out)} shots")
+        save(p)
+
+
+def in_h3_format(motion):
+    return "integrated_multimodal_description:" in motion
+
+
+def rewrite_prompt(p, s):
+    """Rewrites one shot's motion prompt in H3's format, with MiniMax's guide."""
+    with lock:
+        names = ", ".join(c["name"] for c in p["characters"] if c["id"] in s["characters"]) or "nobody recurring"
+        draft = s["motion_prompt"]
+        user = (f"First frame (the still's prompt):\n{s['still_prompt'] or '(none)'}\n\nCharacters in it: {names}\n"
+                f"Length: {s['seconds']} seconds\n\nDraft motion prompt:\n{draft or '(none: invent fitting motion and sound)'}")
+    text = llm(with_guide(REWRITE_PROMPT), user)
+    at = text.find("integrated_multimodal_description:")
+    if at < 0:
+        raise RuntimeError("the answer wasn't an H3 prompt: " + text[:300])
+    with lock:
+        if s["motion_prompt"] != draft:
+            raise RuntimeError("the prompt was edited meanwhile; rewrite it again")
+        s["motion_prompt"] = text[at:].strip()
         save(p)
 
 
@@ -301,7 +359,7 @@ def render(p, s, kind):
         still = s["still"]["file"]
         frame = upload_once(os.path.join(out, still), f"studio_{pid}_{sid}_{still}", up)
         name = f"preview-{seed}.mp4"
-        took = comfy.run(wf.preview(s["motion_prompt"], frame, sizes["preview"], s["seconds"], seed, f"studio/{pid}/{sid}"),
+        took = comfy.run(wf.preview(h3_prompt(s["motion_prompt"]), frame, sizes["preview"], s["seconds"], seed, f"studio/{pid}/{sid}"),
                          os.path.join(out, name), stop)
         return "preview", {"file": name, "seed": seed, "still": still, "prompt": s["motion_prompt"],
                            "seconds": s["seconds"], "took": took, "at": int(time.time())}
@@ -309,7 +367,7 @@ def render(p, s, kind):
         prev = s["preview"]  # the approved one: its seed, frame, prompt and length again
         frame = upload_once(os.path.join(out, prev["still"]), f"studio_{pid}_{sid}_{prev['still']}", up)
         name = f"final-{prev['seed']}.mp4"
-        took = comfy.run(wf.final(prev["prompt"], frame, sizes["preview"], sizes["final"], prev["seconds"],
+        took = comfy.run(wf.final(h3_prompt(prev["prompt"]), frame, sizes["preview"], sizes["final"], prev["seconds"],
                                   prev["seed"], f"studio/{pid}/{sid}", refine=p.get("refine", "standard")),
                          os.path.join(out, name), stop)
         return "final", {"file": name, "preview": prev["file"], "took": took, "at": int(time.time())}
@@ -348,6 +406,15 @@ def worker():
                 raise RuntimeError("project gone")
             if task["kind"] == "shots":
                 write_shots(p, task.get("replace", False))
+            elif task["kind"] == "prompt":
+                with lock:
+                    s = find(p["shots"], task["shot"])
+                if s is None:
+                    raise RuntimeError("shot gone")
+                rewrite_prompt(p, s)
+                with lock:
+                    s.pop("error", None)
+                    save(p)
             else:
                 with lock:
                     s = find(p["shots"], task["shot"])
@@ -392,6 +459,8 @@ def enqueue(p, kind, shot_ids, replace=False):
             if shot_ids != "all" and s["id"] not in shot_ids:
                 continue
             if shot_ids == "all" and not wanted(p, kind, s):
+                continue
+            if kind == "prompt" and not (s["motion_prompt"].strip() or s["still_prompt"].strip()):
                 continue
             if kind == "preview" and not s.get("still") or kind == "final" and not s.get("preview") \
                     or kind == "upscale" and not s.get("final"):
