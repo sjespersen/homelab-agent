@@ -32,5 +32,9 @@ know a web address on it, check with `curl -s -o /dev/null -w '%{http_code}\n' <
 answers (an AI box with the homelab-agent ai module: its Local AI page on port 8005, at
 `/_ai/login`; its models need another ~30-60 seconds to load after that).
 
+For a device woken through a wake URL (the result line says "asked <name> to wake up"), that
+line already has the device's own answer (e.g. "remote wakeup sent"): that's the confirmation.
+Don't try to reach its .local name from here; this container can't resolve those.
+
 Tell the user what you did and whether the device came back. Don't send the packet repeatedly:
 if the device doesn't answer after two minutes, say so.
