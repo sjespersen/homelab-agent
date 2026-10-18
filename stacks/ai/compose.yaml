@@ -18,6 +18,7 @@ services:
     image: ghcr.io/ggml-org/llama.cpp:server-cuda@sha256:ccfd96bb2aba4ef77e3df656d713ce85bf3c6a886d7974243127c5ad66ca6d2a  # b11515
     container_name: ai-qwen27b
     labels:
+      homelab.ai.files: llama.cpp   # its models, for the switcher's cache drop
       homelab.ai.title: Qwen3.8-27B
       homelab.ai.about: "Chat, dense 27B on llama.cpp; fast, all on the GPU"
       homelab.ai.kind: chat
@@ -110,6 +111,7 @@ services:
     image: local/strata:v0.1.41
     container_name: ai-strata
     labels:
+      homelab.ai.files: strata   # its models, for the switcher's cache drop
       homelab.ai.title: Qwen3.8-Flash-Next
       homelab.ai.about: "Chat, 125B MoE on Strata; smarter, uses ~50 GB RAM"
       homelab.ai.kind: chat
@@ -133,7 +135,7 @@ services:
       REINSTALL: ${STRATA_REINSTALL:-0}
       VISION: "no"
       GPU: "0"
-    # First start downloads the model (~70 GB) and prepares it; later starts take 1-3 minutes.
+    # First start downloads the model (~70 GB) and prepares it; later starts take under a minute.
     # Strata keeps 32-62 GB of it in RAM and page-locks part of that for the GPU.
     volumes:
       - ${AI_MODELS_DIR}/strata:/data
@@ -172,6 +174,7 @@ services:
     image: local/swarmui:d9ecb52
     container_name: ai-swarmui
     labels:
+      homelab.ai.files: swarm/Models   # its models, for the switcher's cache drop
       homelab.ai.title: SwarmUI
       homelab.ai.about: "Images: Krea 2, SDXL, Flux and more, on ComfyUI"
       homelab.ai.kind: image
@@ -180,6 +183,12 @@ services:
     user: "${PUID}:${PGID}"
     cap_drop: [ALL]
     command: ["--forward_restart"]   # exit code 42 (restart from the UI) ends the container; Docker restarts it
+    # Its PID 1 is a bash script, which ignores SIGTERM: every stop waited out Docker's timeout and
+    # was then killed (60 s per switch to a chat model). An init passes the signal to the whole
+    # process group, so SwarmUI and ComfyUI shut down by themselves in seconds.
+    init: true
+    environment:
+      TINI_KILL_PROCESS_GROUP: "1"
     ports:
       - "127.0.0.1:7801:7801"
     volumes:
@@ -309,6 +318,8 @@ services:
     volumes:
       - ./switcher:/app:ro
       - ./data/switcher:/state
+      # Read-only, to drop a stopped service's model files from the page cache (drop_cache).
+      - ${AI_MODELS_DIR}:/models:ro
       - ../caddy/site:/site:ro
     networks: [default, docker-api]
     read_only: true

@@ -79,8 +79,11 @@ gives the GPU to that model, after requests still running on the other one finis
 until it has loaded. Any other name goes to the chat model that runs, or the last one used.
 `/v1/models` lists both. While SwarmUI has the GPU the API answers 503 instead of stopping it.
 
-Switching stops the running service (Strata takes up to a minute to release its locked RAM)
-and starts the other one; models already downloaded load in a minute or two. The choice is
+Switching stops the running service and starts the other one; models already downloaded load
+in under a minute (SwarmUI to Strata, measured: 44 s). Before the start the switcher drops the
+stopped service's model files from the page cache: the kernel would free that cache by itself,
+but Strata's 47 GB of huge pages waited ~80 s for it after SwarmUI. Strata's load is then bound
+by the drive (~1.7 GB/s on this box's QLC NVMe: ~30 s of the 44). The choice is
 saved on the server (`data/switcher/active`): it survives reboots and deploys. `AI_MODEL` in the
 config is only what a new box starts with. With several servers, put the AI box's config
 first: `CONFIG=config.ai.env ./ai-model.sh strata`.

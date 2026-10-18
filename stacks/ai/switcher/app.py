@@ -42,6 +42,7 @@ POWER_ACTIONS = ("suspend", "reboot", "poweroff")
 # The chat model last given the GPU, for API requests that name no model while none runs
 # (STATE says "none" after Stop or an idle stop).
 LAST_CHAT_FILE = os.path.join(os.path.dirname(STATE), "last-chat")
+MODELS_DIR = os.environ.get("MODELS_DIR", "/models")   # AI_MODELS_DIR, read-only
 # The page is also the box's landing page (port 80): its name, and the other services' links.
 NAME = os.environ.get("NAME", "")
 LINKS_FILE = os.environ.get("LINKS_FILE", "/site/links.json")
@@ -114,6 +115,8 @@ def services():
             "state": c["State"],  # running, exited, created, ...
             "health": health,     # starting, healthy, unhealthy or None
             "started": detail["State"].get("StartedAt"),
+            # Its model files, under MODELS_DIR: dropped from the page cache when another one starts.
+            "files": labels.get("homelab.ai.files", ""),
         })
     return sorted(found, key=lambda s: s["order"])
 
@@ -248,6 +251,29 @@ def leds():
             "devices": [{"name": d.get("name"), "mode": d.get("mode")} for d in devices]}
 
 
+def drop_cache(sub):
+    """Drops a stopped service's model files from the page cache (posix_fadvise; no root needed).
+    The kernel frees that cache by itself, but slowly when the next service wants a lot of RAM at
+    once: Strata's 47 GB of huge pages waited ~80 s for SwarmUI's cached models, 0 s after this
+    (which takes under a second)."""
+    root = os.path.realpath(MODELS_DIR)
+    top = os.path.realpath(os.path.join(root, sub))
+    if not top.startswith(root + os.sep) or not hasattr(os, "posix_fadvise"):
+        return
+    for d, _, files in os.walk(top):
+        for f in files:
+            try:
+                fd = os.open(os.path.join(d, f), os.O_RDONLY | os.O_NOFOLLOW)
+            except OSError:
+                continue
+            try:
+                os.posix_fadvise(fd, 0, 0, os.POSIX_FADV_DONTNEED)
+            except OSError:
+                pass
+            finally:
+                os.close(fd)
+
+
 def switch(target):
     """Gives the GPU to service <target>, or to none ("none": stop them all)."""
     try:
@@ -263,6 +289,10 @@ def switch(target):
             elif s["state"] in ("running", "restarting"):
                 # Strata needs up to a minute to release its page-locked RAM.
                 docker("POST", f"/containers/{s['container']}/stop?t=60")
+        if target != "none":
+            for s in all_services:
+                if s["id"] != target and not s["always_on"] and s["files"]:
+                    drop_cache(s["files"])
         for s in all_services:
             if (s["id"] == target or s["always_on"]) and s["state"] != "running":
                 docker("POST", f"/containers/{s['container']}/start")
