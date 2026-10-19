@@ -197,8 +197,8 @@ agent) gets a lot. Read this before you put anything valuable on the box.
   photos must be PNG, JPEG or WebP (checked by their first bytes, 25 MB at most) and are stored
   under names the Studio makes up; it serves renders only by those names, so a request can't
   reach other files.
-- The USB wake Pi (`extras/usb-wake`) answers `/api/wake` without a login to anyone on the
-  LAN; it can only wake the box or tap Shift, not type anything else.
+- The wake relay Pi (`extras/wake-relay`) answers `/api/wake` without a login to anyone on the
+  LAN; all it can do is send the magic packet to the box.
 - Hermes pushes to GitHub with per-repo deploy keys, not your account.
 - The Mac's backup key can only read the backup folder (`rrsync -ro`).
 - Backups are encrypted with restic.
@@ -385,8 +385,8 @@ Hermes gets a `wake-device` skill: it writes a name to `/opt/data/wake/request`,
 user service on the host (`hermes-wake.path`, no root) sends the Wake-on-LAN packet, since
 broadcasts from Hermes' container don't leave its Docker network. A device that wakes some other
 way can have a URL instead of a MAC (`laptop=http://buddy.local/api/wake`): the host POSTs to it,
-e.g. a USB keyboard gadget plugged into that computer (`extras/usb-wake`, or an ESP32-S3 doing
-the same). Ask it on Telegram or WhatsApp
+e.g. a Pi cabled to a Wi-Fi-only box's Ethernet port (`extras/wake-relay`), or an ESP32-S3
+plugged in as a USB keyboard. Ask it on Telegram or WhatsApp
 to "wake the gpubox". The other computer has to allow Wake-on-LAN (see `extras/wake-on-lan`).
 
 ## Extras
@@ -397,8 +397,8 @@ to "wake the gpubox". The other computer has to allow Wake-on-LAN (see `extras/w
   See its README.
 - `extras/wake-on-lan/`: wakes the box over the network from suspend or off (`WAKE_ON_LAN_*`).
   See its README.
-- `extras/usb-wake/`: wakes the box from suspend with a Pi Zero plugged in as a USB keyboard,
-  also on Wi-Fi (`USB_WAKE_*`). See its README.
+- `extras/wake-relay/`: wakes the box while it's on Wi-Fi, through a Pi cabled to its Ethernet
+  port (`WAKE_RELAY_*`). See its README.
 
 ## Not covered
 

@@ -120,16 +120,8 @@ elif [[ -f /etc/systemd/system/wake-on-lan.service ]]; then
   systemctl daemon-reload
 fi
 
-if [[ -n ${USB_WAKE_DEVICE:-} ]]; then
-  log "USB wake by $USB_WAKE_DEVICE"
-  install -m 0755 "$repo/extras/usb-wake/usb-wake-path" /usr/local/sbin/usb-wake-path
-  sed -e "s|@VID@|${USB_WAKE_DEVICE%%:*}|" -e "s|@PID@|${USB_WAKE_DEVICE##*:}|" \
-    "$repo/extras/usb-wake/90-usb-wake.rules" >/etc/udev/rules.d/90-usb-wake.rules
-  udevadm control --reload
-  udevadm trigger --action=add --subsystem-match=usb --attr-match=idVendor="${USB_WAKE_DEVICE%%:*}" \
-    --attr-match=idProduct="${USB_WAKE_DEVICE##*:}"
-elif [[ -f /etc/udev/rules.d/90-usb-wake.rules ]]; then
-  log "USB wake: off"
+# Left over from the USB wake keyboard that extras/wake-relay replaced
+if [[ -f /etc/udev/rules.d/90-usb-wake.rules ]]; then
   rm -f /etc/udev/rules.d/90-usb-wake.rules /usr/local/sbin/usb-wake-path
   udevadm control --reload
 fi

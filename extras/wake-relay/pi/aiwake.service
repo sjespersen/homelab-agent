@@ -1,0 +1,13 @@
+[Unit]
+Description=aiwake: Wake-on-LAN for the box over a direct cable (POST /api/wake)
+After=network.target
+
+[Service]
+# The MAC of the box's Ethernet port (WAKE_ON_LAN_MAC)
+Environment=AIWAKE_MAC=aa:bb:cc:dd:ee:ff
+ExecStart=/usr/bin/python3 /usr/local/bin/aiwake.py
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

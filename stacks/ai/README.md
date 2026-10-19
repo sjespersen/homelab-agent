@@ -106,7 +106,8 @@ first: `CONFIG=config.ai.env ./ai-model.sh strata`.
   fails (seen on an RTX 50 card with Strata).
 - Waking up: the power button, or Wake-on-LAN with `./ai-model.sh wake` (set `WAKE_ON_LAN_*`;
   see [extras/wake-on-lan](../../extras/wake-on-lan/README.md), also for the BIOS settings
-  that waking from off needs).
+  that waking from off needs). On Wi-Fi, through a Pi cabled to the Ethernet port
+  ([extras/wake-relay](../../extras/wake-relay/README.md), `WAKE_RELAY_*`).
 
 ## Case LEDs
 
