@@ -1,7 +1,9 @@
 """A small client for ComfyUI's HTTP API, through SwarmUI's pass-through (/ComfyBackendDirect):
 upload an input file, queue a graph, wait for it, fetch its output."""
+import glob
 import json
 import os
+import shutil
 import time
 import urllib.error
 import urllib.parse
@@ -10,6 +12,7 @@ import uuid
 
 BASE = os.environ.get("COMFY_URL", "http://swarmui:7801/ComfyBackendDirect")
 CLIENT = "homelab-studio"
+COMFY_DIR = os.environ.get("COMFY_DIR", "/comfy/ComfyUI")  # ComfyUI's folders, to delete its copies
 
 
 class ComfyError(Exception):
@@ -104,6 +107,29 @@ def fetch(filename, subfolder, kind, dest):
     os.replace(tmp, dest)
 
 
+def forget(names=(), output=None):
+    """Deletes ComfyUI's copies: uploaded inputs by name (and SwarmUI's previews of them), and
+    an output file or folder under output/studio (given as "studio/...")."""
+    if not os.path.isdir(COMFY_DIR):
+        return
+    for name in names:
+        for path in glob.glob(os.path.join(COMFY_DIR, "input", glob.escape(name) + "*")):
+            if os.path.basename(path) == name or os.path.basename(path).startswith(name + ".swarmpreview."):
+                try:
+                    os.remove(path)
+                except OSError:
+                    pass
+    if output and output.startswith("studio/") and ".." not in output:
+        path = os.path.join(COMFY_DIR, "output", output)
+        if os.path.isdir(path):
+            shutil.rmtree(path, ignore_errors=True)
+        else:
+            try:
+                os.remove(path)
+            except OSError:
+                pass
+
+
 def run(graph, dest, stop=lambda: False):
     """Queues the graph, waits, saves its (last) output file to dest. Returns seconds taken."""
     t = time.time()
@@ -112,4 +138,7 @@ def run(graph, dest, stop=lambda: False):
     if not files:
         raise ComfyError("the graph saved nothing")
     fetch(*files[-1], dest)
+    for filename, subfolder, kind in files:  # the Studio has its copy now
+        if kind == "output":
+            forget(output=f"{subfolder}/{filename}")
     return round(time.time() - t)

@@ -9,6 +9,7 @@ the renders in MEDIA, on the models disk. One job runs at a time; the jobs ask t
 the GPU (Qwen for the shot list, SwarmUI for the rest) and hold it while they run.
 """
 import base64
+import glob
 import hashlib
 import hmac
 import json
@@ -426,13 +427,12 @@ def take_picture(p, reading):
 PORTRAIT = (768, 1024)  # character photos: full body, upright
 
 
-def make_looks(p):
+def make_looks(p, up):
     """From the project's descriptions: a reference photo for each character cut out of the
     picture (the identity LoRA restages the crop full body on a plain background, in their
     outfit, which is the photo the stills work best from) and an image of each place."""
     need_swarmui()
     stop = lambda: current["stop"]
-    up = {}
     with lock:
         todo = [("character", c) for c in p["characters"] if c.get("box")] + \
                [("place", x) for x in p["places"] if not x.get("image") and x["look"].strip()]
@@ -677,13 +677,29 @@ def upload_once(path, name, cache):
     return cache[name]
 
 
-def render(p, s, kind):
+def forget_comfy(pid=None, sid=None):
+    """ComfyUI's leftover copies of a project's (or a shot's, or with no pid every project's)
+    uploads and renders."""
+    prefix = "studio_" + (f"{pid}_" + (f"{sid}_" if sid else "") if pid else "")
+    names = [os.path.basename(x) for x in glob.glob(os.path.join(comfy.COMFY_DIR, "input", glob.escape(prefix) + "*"))
+             if ".swarmpreview." not in x]
+    comfy.forget(names=names, output="studio/" + "/".join(x for x in (pid, sid) if x) if pid else None)
+    if not pid:
+        for d in glob.glob(os.path.join(comfy.COMFY_DIR, "output", "studio", "*")):
+            shutil.rmtree(d, ignore_errors=True)
+
+
+def forget_uploads(cache):
+    """Deletes ComfyUI's copies of a job's uploads (the next job uploads again)."""
+    comfy.forget(names=list(cache.values()))
+
+
+def render(p, s, kind, up):
     pid, sid = p["id"], s["id"]
     out = media_dir(pid, sid)
     os.makedirs(out, exist_ok=True)
     sizes = wf.SIZES.get(p["aspect"], wf.SIZES["16:9"])
     stop = lambda: current["stop"]
-    up = {}
     seed = random.randrange(1, 2**31)
     if kind == "still":
         with lock:
@@ -750,7 +766,11 @@ def worker():
                 if write_shots(p, task.get("replace", False)):
                     enqueue(p, "looks", "all")
             elif task["kind"] == "looks":
-                make_looks(p)
+                up = {}
+                try:
+                    make_looks(p, up)
+                finally:
+                    forget_uploads(up)
             elif task["kind"] == "prompt":
                 with lock:
                     s = find(p["shots"], task["shot"])
@@ -766,7 +786,11 @@ def worker():
                 if s is None:
                     raise RuntimeError("shot gone")
                 need_swarmui()
-                field, record = render(p, s, task["kind"])
+                up = {}
+                try:
+                    field, record = render(p, s, task["kind"], up)
+                finally:
+                    forget_uploads(up)
                 with lock:
                     s[field] = record
                     s.pop("error", None)
@@ -1058,6 +1082,7 @@ class Handler(BaseHTTPRequestHandler):
                 del projects[p["id"]]
                 shutil.rmtree(project_dir(p["id"]), ignore_errors=True)
                 shutil.rmtree(media_dir(p["id"]), ignore_errors=True)
+                forget_comfy(p["id"])
                 return self.json({"deleted": p["id"]})
             if len(parts) == 4 and parts[3] == "picture":
                 self.drop_picture(p)
@@ -1079,6 +1104,7 @@ class Handler(BaseHTTPRequestHandler):
                     p["shots"].remove(s)
                     queue[:] = [t for t in queue if t.get("shot") != s["id"]]
                     shutil.rmtree(media_dir(p["id"], s["id"]), ignore_errors=True)
+                    forget_comfy(p["id"], s["id"])
                     save(p)
                 return self.json(public(p))
         self.json({"error": "not found"}, 404)
@@ -1279,6 +1305,7 @@ class Handler(BaseHTTPRequestHandler):
 
 if __name__ == "__main__":
     load_all()
+    forget_comfy()  # no job runs yet: whatever ComfyUI still has of ours is a copy
     threading.Thread(target=worker, daemon=True).start()
     threading.Thread(target=hold_loop, daemon=True).start()
     ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()

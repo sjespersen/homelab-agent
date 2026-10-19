@@ -357,6 +357,9 @@ services:
       - ./data/studio:/data
       - ${AI_MODELS_DIR}/studio:/media
       - ${AI_MODELS_DIR}/swarm/Models:/models:ro   # only to see which models are there
+      # ComfyUI keeps a copy of every upload (input/) and render (output/studio/): the Studio
+      # deletes them once it has its own, and with a deleted project or shot.
+      - ${AI_MODELS_DIR}/swarm/dlbackend:/comfy
     read_only: true
     cap_drop: [ALL]
     restart: unless-stopped
