@@ -176,17 +176,26 @@ models). SwarmUI fetches text encoders and VAEs itself on first use.
    otherwise). **Write shot list** has a chat model turn it into
    shots: a still prompt (the first frame) and a motion-and-sound prompt per shot. Edit any of
    it, or add shots by hand. Motion prompts follow H3's own format (`integrated_multimodal_description`,
-   `overall_soundscape`, `non_diegetic_music`; the Studio adds the first-frame line): Qwen gets
+   `overall_soundscape`, `non_diegetic_music`; the Studio adds the first-frame line): the model gets
    MiniMax's [H3 prompt-writing guide](https://github.com/MiniMax-AI/MiniMax-H3/tree/main/skills/h3-prompt-writing)
    with the brief. **Rewrite for H3** on a shot (or **Rewrite prompts for H3** for all that
    aren't in the format yet) turns a prompt you wrote in plain words into that format.
    Each project picks its model under the brief, from the same list as Open WebUI: Qwen3.8-27B,
    Flash-Next, and whatever you download into Ollama there (`AI_STUDIO_LLM` is the default for
    new projects). Small Ollama models (8-14B) work but write weaker H3 prompts.
-2. **Stills**: Krea 2 Turbo makes each shot's first frame at the final size. With characters in
-   the shot it uses the [Krea 2 Identity Edit V2](https://huggingface.co/conradlocke/krea2-identity-edit)
-   LoRA with their photos: one pass per person, each later pass adding the next person to the
-   picture so far.
+   The model also writes the film's **places and outfits** once (the room, its furniture and
+   light; each garment and what isn't worn), and each shot names its place and, per person,
+   an outfit and where they stand in the frame. Edit them under **Places and outfits** and in a
+   shot's prompts.
+2. **Stills**: Krea 2 Turbo makes each shot's first frame at the final size. Each still is made
+   on its own, so the Studio adds the place's and the outfits' descriptions to every prompt:
+   that keeps the room and the clothes the same from shot to shot. With characters in the shot
+   it uses the [Krea 2 Identity Edit V2](https://huggingface.co/conradlocke/krea2-identity-edit)
+   LoRA with their photos, one pass per person, each with its own prompt. Krea doesn't know
+   names, so the Studio swaps them for positions: pass 1 has the first person's photo and
+   stages the whole scene ("the person from the photo is on the left", the others as stand-ins
+   at their places), and each later pass replaces one stand-in ("the person on the right")
+   with the person from the next photo. Click a still to see it at full size.
 3. **Previews**: MiniMax H3 animates the still at ~0.3 MP (736×416 for 16:9), with sound.
 4. **Review**: approve, retry (a new seed) or reject each preview; only approved ones go on.
 5. **Finals**: the approved preview again (same seed, frame and prompt, so the same motion),

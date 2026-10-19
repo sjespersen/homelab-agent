@@ -52,7 +52,7 @@ label { font-size:11px; color:var(--muted); display:block; margin:8px 0 3px; }
 .pill.bad { background:var(--bad-soft); color:var(--bad); } .pill.accent { background:var(--accent-soft); color:var(--accent); }
 .pill.blue { background:var(--blue-soft); color:var(--blue); }
 .layout { display:grid; grid-template-columns: 340px minmax(0, 1fr); gap:12px; align-items:start; }
-.side { display:grid; gap:12px; position:sticky; top:12px; }
+.side { display:grid; gap:12px; position:sticky; top:12px; max-height:calc(100vh - 24px); overflow-y:auto; overscroll-behavior:contain; scrollbar-width:thin; }
 @media (max-width: 980px) { .layout { grid-template-columns: 1fr; } .side { position:static; } }
 
 /* Running job */
@@ -118,6 +118,28 @@ label { font-size:11px; color:var(--muted); display:block; margin:8px 0 3px; }
 .mp-head .small { padding:2px 8px; font-size:11px; }
 .shot details summary { cursor:pointer; font-size:12px; color:var(--muted); margin-top:6px; }
 .err { color:var(--bad); font-size:12px; margin-top:6px; }
+/* Places and outfits */
+.looks { display:grid; gap:6px; }
+.look { display:grid; gap:4px; padding:8px; border:1px solid var(--line); border-radius:10px; }
+.look .row { flex-wrap:nowrap; }
+.look input, .look select { padding:4px 6px; font-size:12px; }
+.look input.n { font-weight:600; }
+.look textarea { min-height:38px; font-size:12px; padding:4px 6px; }
+.looks-head { display:flex; justify-content:space-between; align-items:center; margin:10px 0 6px; }
+.looks-head:first-child { margin-top:0; }
+.place-sel { width:auto !important; max-width:150px; padding:2px 6px !important; font-size:12px !important; }
+.cast { display:grid; gap:4px; margin-top:8px; }
+.cast .row { flex-wrap:nowrap; font-size:12px; }
+.cast b { min-width:70px; font-weight:600; }
+.cast input, .cast select { padding:3px 6px; font-size:12px; }
+/* The full-size viewer */
+.s-still .frame img { cursor:zoom-in; }
+.viewer { position:fixed; inset:0; z-index:50; background:rgba(0,0,0,.88); display:flex; flex-direction:column; }
+.viewer .vbar { display:flex; justify-content:space-between; align-items:center; gap:10px; padding:8px 12px; color:#ddd; font-size:12px; }
+.viewer .vbar button { background:#222; color:#eee; border-color:#444; }
+.viewer .vbox { flex:1; overflow:auto; display:grid; place-items:center; min-height:0; }
+.viewer img { max-width:100%; max-height:100%; cursor:zoom-in; display:block; }
+.viewer.actual img { max-width:none; max-height:none; cursor:zoom-out; }
 .review-actions { display:flex; gap:6px; }
 @media (max-width: 760px) { .media { grid-template-columns: repeat(2, minmax(0, 1fr)); } .prompts { grid-template-columns: 1fr; } }
 
@@ -254,6 +276,9 @@ function renderProject(first) {
       <section class="card"><div class="card-head"><h2>Characters</h2><button class="small" id="add-char">${icon('plus')}Add</button></div>
         <div class="hint" style="margin-bottom:8px">One clear photo each, showing the outfit, on a plain background (a busy one leaks into the stills). Drop it on the frame.</div>
         <div class="chars" id="chars"></div></section>
+      <section class="card"><div class="card-head"><h2>Places and outfits</h2></div>
+        <div class="hint" style="margin-bottom:8px">Added to every still that uses them, so the shots match. The shot list fills these in; edit them here.</div>
+        <div id="looks"></div></section>
       <section class="card"><div class="card-head"><h2>Project</h2></div>
         <div class="row"><button class="small" id="del-proj" data-label="Delete project">Delete project</button>
         <span class="hint">Deletes the shots, photos and renders.</span></div></section>
@@ -283,7 +308,7 @@ function renderProject(first) {
     document.querySelectorAll('[data-mode]').forEach(b => b.onclick = () => { mode = b.dataset.mode; $('shots').innerHTML = ''; renderProject(false); });
   }
   document.querySelectorAll('[data-mode]').forEach(b => b.classList.toggle('on', b.dataset.mode === mode));
-  renderChars(); renderStages();
+  renderChars(); renderLooks(); renderStages();
   mode === 'review' ? renderReview() : renderShots();
 }
 // A button that needs a second click within 5 s (no browser dialog).
@@ -295,6 +320,39 @@ function armed(b, text, act) {
     }
     clearTimeout(b.timer); b.classList.remove('confirm'); b.textContent = b.dataset.label; act();
   };
+}
+
+// Places and outfits: whole lists, saved on change.
+function renderLooks() {
+  const box = $('looks');
+  const key = JSON.stringify([P.places, P.outfits, P.characters.map(c => [c.id, c.name])]);
+  if (box._key === key || box.contains(document.activeElement)) return;
+  box._key = key;
+  const charOpts = cur => P.characters.map(c => `<option value="${c.id}" ${c.id === cur ? 'selected' : ''}>${esc(c.name)}</option>`).join('');
+  box.innerHTML = `<div class="looks-head"><span class="hint">Places</span><button class="small" data-add="places">${icon('plus')}Place</button></div>
+    <div class="looks">${P.places.map(x => `<div class="look" data-list="places" data-id="${x.id}"><div class="row">
+      <input class="n" value="${esc(x.name)}" placeholder="Name"><button class="small x" data-label="Remove">Remove</button></div>
+      <textarea class="l" placeholder="The room or landscape, furniture and where it stands, colours, time of day, the lights">${esc(x.look)}</textarea></div>`).join('')
+      || '<div class="hint">None yet.</div>'}</div>
+    <div class="looks-head"><span class="hint">Outfits</span><button class="small" data-add="outfits" ${P.characters.length ? '' : 'disabled'}>${icon('plus')}Outfit</button></div>
+    <div class="looks">${P.outfits.map(x => `<div class="look" data-list="outfits" data-id="${x.id}"><div class="row">
+      <select class="c" style="width:auto">${charOpts(x.character)}</select><input class="n" value="${esc(x.name)}" placeholder="Name">
+      <button class="small x" data-label="Remove">Remove</button></div>
+      <textarea class="l" placeholder="Each garment with colour and material, shoes, hair; what isn't worn">${esc(x.look)}</textarea></div>`).join('')
+      || '<div class="hint">None yet.</div>'}</div>`;
+  const send = (list, items) => api('POST', `/api/projects/${P.id}/update`, {[list]: items}).then(d => { P = d; box._key = null; renderProject(false); });
+  box.querySelectorAll('[data-add]').forEach(b => b.onclick = () => {
+    const list = b.dataset.add;
+    send(list, [...P[list], list === 'places' ? {name: 'New place', look: ''} : {character: P.characters[0].id, name: 'New outfit', look: ''}]);
+  });
+  box.querySelectorAll('.look').forEach(el => {
+    const list = el.dataset.list, id = el.dataset.id;
+    const edit = change => send(list, P[list].map(x => x.id === id ? {...x, ...change} : x));
+    el.querySelector('.n').onchange = e => edit({name: e.target.value});
+    el.querySelector('.l').onchange = e => edit({look: e.target.value});
+    const c = el.querySelector('.c'); if (c) c.onchange = e => edit({character: e.target.value});
+    armed(el.querySelector('.x'), 'Really?', () => send(list, P[list].filter(x => x.id !== id)));
+  });
 }
 
 function renderChars() {
@@ -388,7 +446,7 @@ function patch(s, body) { return api('POST', `/api/projects/${P.id}/shots/${s.id
 // video or a prompt you're typing isn't redrawn.
 function renderShots() {
   const box = $('shots');
-  if (!P.shots.length) { box.innerHTML = `<div class="card empty">No shots yet. Write the brief and let Qwen write the shot list, or add shots by hand.</div>`; box._ids = ''; return; }
+  if (!P.shots.length) { box.innerHTML = `<div class="card empty">No shots yet. Write the brief and let the model write the shot list, or add shots by hand.</div>`; box._ids = ''; return; }
   const ids = P.shots.map(s => s.id).join();
   if (box._ids !== ids || !box.firstChild || box.firstChild.classList.contains('empty')) {
     box._ids = ids; box.className = 'shots';
@@ -400,15 +458,15 @@ function slot(name, cls) { return `<div class="slot ${cls}"><div class="frame">$
 function updateShot(el, s, i) {
   if (!el._built) {
     el._built = true;
-    el.innerHTML = `<div class="shot-head"><span class="num"></span><input class="title"><div class="who"></div>
+    el.innerHTML = `<div class="shot-head"><span class="num"></span><input class="title"><div class="who"></div><select class="place-sel" title="The place: its look is added to the still"></select>
       <span class="hint">seconds</span><input class="secs" type="number" min="4" max="15">
       <span class="pill rv"></span>
       <button class="small up" title="Move up">${icon('up')}</button><button class="small down" title="Move down">${icon('down')}</button>
       <button class="small del" data-label="Delete">Delete</button></div>
       <div class="media">${slot('No still yet', 's-still')}${slot('No preview yet', 's-preview')}${slot('Not approved yet', 's-final')}${slot('No upscale yet', 's-upscale')}</div>
-      <details><summary>Prompts</summary><div class="prompts">
+      <details><summary>Prompts</summary><div class="cast"></div><div class="prompts">
         <div><label>Still (first frame, Krea 2)</label><textarea class="sp"></textarea></div>
-        <div><label class="mp-head">Motion and sound (MiniMax H3)<button class="small rw" title="Qwen rewrites this prompt in H3's format, with MiniMax's prompt guide; keeps what it says">Rewrite for H3</button></label><textarea class="mp"></textarea></div></div></details>
+        <div><label class="mp-head">Motion and sound (MiniMax H3)<button class="small rw" title="The shot-list model rewrites this prompt in H3's format, with MiniMax's prompt guide; keeps what it says">Rewrite for H3</button></label><textarea class="mp"></textarea></div></div></details>
       <div class="err" hidden></div>`;
     el.querySelector('.title').onchange = e => patch(s, {title: e.target.value});
     el.querySelector('.secs').onchange = e => patch(s, {seconds: parseInt(e.target.value) || 6});
@@ -432,6 +490,26 @@ function updateShot(el, s, i) {
       const cur = P.shots.find(x => x.id === s.id).characters, c = b.dataset.c;
       patch(s, {characters: cur.includes(c) ? cur.filter(x => x !== c) : [...cur, c]});
     }); }
+  const pl = el.querySelector('.place-sel');
+  const plHtml = `<option value="">No place</option>` + P.places.map(x => `<option value="${x.id}" ${x.id === s.place ? 'selected' : ''}>${esc(x.name)}</option>`).join('');
+  if (pl._html !== plHtml && pl !== document.activeElement) { pl._html = plHtml; pl.innerHTML = plHtml; pl.onchange = e => patch(s, {place: e.target.value}); }
+  // Each person in the shot: where in the frame (that's what ties them to their photo) and the outfit.
+  const castEl = el.querySelector('.cast'), cast = s.cast || {};
+  const castHtml = s.characters.map(cid => {
+    const c = P.characters.find(x => x.id === cid); if (!c) return '';
+    const m = cast[cid] || {}, outfits = P.outfits.filter(o => o.character === cid);
+    return `<div class="row" data-c="${cid}"><b>${esc(c.name)}</b>${c.ref ? '' : '<span class="pill warn">no photo</span>'}
+      <input class="pos" value="${esc(m.position || '')}" placeholder="where: on the left, on the right, in the background">
+      <select class="out" style="width:auto;max-width:160px"><option value="">No outfit</option>${outfits.map(o => `<option value="${o.id}" ${o.id === m.outfit ? 'selected' : ''}>${esc(o.name)}</option>`).join('')}</select></div>`;
+  }).join('');
+  if (castEl._html !== castHtml && !castEl.contains(document.activeElement)) {
+    castEl._html = castHtml; castEl.innerHTML = castHtml;
+    castEl.querySelectorAll('[data-c]').forEach(r => {
+      const cid = r.dataset.c;
+      r.querySelector('.pos').onchange = e => patch(s, {cast: {[cid]: {position: e.target.value}}});
+      r.querySelector('.out').onchange = e => patch(s, {cast: {[cid]: {outfit: e.target.value}}});
+    });
+  }
   const rv = el.querySelector('.rv');
   rv.textContent = !s.preview ? 'no preview' : s.review === 'approved' ? 'approved' : s.review === 'rejected' ? 'rejected' : 'to review';
   rv.className = 'pill rv ' + (s.review === 'approved' && s.preview ? 'good' : s.review === 'rejected' ? 'bad' : s.preview ? 'warn' : '');
@@ -453,11 +531,31 @@ function updateShot(el, s, i) {
     s.upscale ? (st.upscale_outdated ? 'older final' : `${s.upscale.took}s`) : '',
     [['redo', s.upscale ? 'Again' : 'Upscale', () => run('upscale', s), false, !s.final]]);
 }
+// Click a still: the picture at full size; click it again for 100% (scroll around), Esc closes.
+function viewImage(src, caption) {
+  const v = document.createElement('div'); v.className = 'viewer';
+  v.innerHTML = `<div class="vbar"><span class="cap"></span><span class="row"><a class="btn small" href="${src}" target="_blank" rel="noopener">Open</a>
+    <button class="small">Close</button></span></div><div class="vbox"><img src="${src}" alt=""></div>`;
+  const img = v.querySelector('img'), cap = v.querySelector('.cap');
+  const label = () => cap.textContent = `${caption} · ${img.naturalWidth}×${img.naturalHeight}` + (v.classList.contains('actual') ? ' · 100%' : ' · fitted');
+  img.onload = label;
+  img.onclick = e => { e.stopPropagation(); v.classList.toggle('actual'); label(); };
+  const close = () => { v.remove(); document.removeEventListener('keydown', key); };
+  const key = e => { if (e.key === 'Escape') close(); };
+  v.querySelector('button').onclick = close;
+  v.querySelector('.vbox').onclick = e => { if (e.target.classList.contains('vbox')) close(); };
+  document.addEventListener('keydown', key);
+  document.body.append(v);
+}
 function fill(slotEl, s, kind, html, caption, actions) {
   const frame = slotEl.querySelector('.frame');
   const key = html || '';
   if (frame.dataset.empty === undefined) frame.dataset.empty = frame.textContent;
-  if (frame._key !== key) { frame._key = key; frame.innerHTML = html || esc(frame.dataset.empty); }
+  if (frame._key !== key) {
+    frame._key = key; frame.innerHTML = html || esc(frame.dataset.empty);
+    const img = frame.querySelector('img');
+    if (img) img.onclick = () => viewImage(img.src, `${P.shots.findIndex(x => x.id === s.id) + 1} · ${s.title}`);
+  }
   frame.classList.toggle('busy', !!isRunning(s, kind));
   const q = isQueued(s, kind), r = isRunning(s, kind);
   const cap = r ? 'rendering…' : q ? 'queued' : caption;

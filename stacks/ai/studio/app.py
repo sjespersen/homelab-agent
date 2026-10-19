@@ -80,7 +80,10 @@ def load_all():
     for pid in os.listdir(root):
         try:
             with open(os.path.join(root, pid, "project.json")) as f:
-                projects[pid] = json.load(f)
+                p = json.load(f)
+            p.setdefault("places", [])
+            p.setdefault("outfits", [])
+            projects[pid] = p
         except (OSError, ValueError):
             continue
 
@@ -89,7 +92,7 @@ def new_project(title):
     slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:30] or "project"
     p = {"id": f"{slug}-{new_id()}", "title": title[:120] or "Untitled", "created": int(time.time()),
          "brief": "", "aspect": "16:9", "target_shots": 12, "refine": "standard",
-         "characters": [], "shots": [], "log": []}
+         "characters": [], "places": [], "outfits": [], "shots": [], "log": []}
     save(p)
     return p
 
@@ -227,14 +230,24 @@ def hold_loop():
 SHOT_PROMPT = """You are a film director's assistant. Turn the brief into a shot list for an AI video pipeline.
 
 Each shot is made in two steps:
-1. A still image (Krea 2) that is the shot's FIRST FRAME. Characters in it come from one reference photo each, so never describe their faces; do say how much of each person is visible ("full body", "waist up", "close-up of her hands"), what they wear (concretely, and what's gone if it differs from the photo), their pose, the place, and the light by where it lands ("warm window light across her left cheek").
+1. A still image (Krea 2) that is the shot's FIRST FRAME. It is made on its own: the image model never sees the other shots, only this shot's text. Characters in it come from one reference photo each, so never describe their faces.
 2. A video clip (MiniMax H3, with sound) that starts from that frame.
 
-Answer with JSON only, no other text:
-{"shots": [{"title": "...", "characters": ["exact character names in the shot"], "seconds": 5-12,
-  "still_prompt": "...", "motion_prompt": "..."}]}
+So that the shots look like one film, first define every place and every outfit once; the pipeline adds a place's and the outfits' descriptions to each still by itself.
 
-Rules: keep each character looking the same across shots (same outfit unless the brief changes it); vary the framing (wide, medium, close-up); keep motion simple and physical; no on-screen text unless asked.
+Answer with JSON only, no other text:
+{"places": [{"name": "short name", "look": "..."}],
+ "outfits": [{"character": "exact character name", "name": "short name", "look": "..."}],
+ "shots": [{"title": "...", "place": "a place name", "seconds": 5-12,
+   "cast": [{"character": "exact character name", "outfit": "an outfit name", "position": "..."}],
+   "still_prompt": "...", "motion_prompt": "..."}]}
+
+- A place's look: the room or landscape, the fixed furniture and props and where they stand, colours and materials, the time of day, and the light sources and where they are. Concrete enough that two pictures of it match.
+- An outfit's look: each garment with colour and material, shoes, hair, jewellery, and what is NOT worn (the model copies clothes from the reference photo otherwise: "no jacket, bare arms"). A character keeps an outfit until the brief changes it.
+- cast: everyone recurring in the shot. position: where they are in the frame ("on the left", "on the right", "in the centre", "in the background"), different for each person in the shot.
+- still_prompt: only what this shot adds: the framing, how much of each person is visible ("full body", "waist up", "close-up of her hands"), the camera angle, poses, actions, expressions, which part of the place is seen, and the light by where it lands ("warm window light across her left cheek"). Refer to people by name. Don't repeat the place's or the outfits' looks.
+- Keep the story continuous: what a shot shows (props, state of things, positions) follows from the shot before unless there's a cut in time.
+- Vary the framing (wide, medium, close-up); keep motion simple and physical; no on-screen text unless asked.
 """
 
 REWRITE_PROMPT = """You rewrite one shot's motion prompt for MiniMax H3, a video model with sound. You get what the shot's first frame shows, its length and a draft motion prompt (plain words, or an older format). Keep the draft's intent: the action, the camera, any dialogue word for word, the sounds and music. Fill in what's missing so it fits the first frame and the length.
@@ -310,14 +323,36 @@ def write_shots(p, replace):
                       for c in p["characters"]) or "(none: no recurring people)"
     user = (f"Brief:\n{p['brief']}\n\nCharacters (use these exact names):\n{chars}\n\n"
             f"Format: {p['aspect']}. About {p['target_shots']} shots.")
+    if not replace and (p["places"] or p["outfits"]):
+        user += ("\n\nThe film so far has these places and outfits; reuse them by name, list only new ones:\n"
+                 + json.dumps(looks_for_llm(p), ensure_ascii=False))
     model = p.get("llm") or LLM_MODEL
     text = llm(with_guide(SHOT_PROMPT), user, model)
     start, end = text.find("{"), text.rfind("}")
     try:
-        shots = json.loads(text[start:end + 1])["shots"]
+        answer = json.loads(text[start:end + 1])
+        shots = answer["shots"]
     except (ValueError, KeyError, TypeError):
         raise RuntimeError("the answer wasn't a shot list: " + text[:300]) from None
     names = {c["name"].lower(): c["id"] for c in p["characters"]}
+    with lock:
+        if replace:
+            p["places"], p["outfits"] = [], []
+        place_ids = {x["name"].lower(): x["id"] for x in p["places"]}
+        outfit_ids = {(x["character"], x["name"].lower()): x["id"] for x in p["outfits"]}
+        for x in answer.get("places") or []:
+            if isinstance(x, dict) and str(x.get("name", "")).strip() and str(x["name"]).strip().lower() not in place_ids:
+                place = {"id": new_id("l"), "name": str(x["name"]).strip()[:60], "look": str(x.get("look", ""))[:2000]}
+                p["places"].append(place)
+                place_ids[place["name"].lower()] = place["id"]
+        for x in answer.get("outfits") or []:
+            if not isinstance(x, dict):
+                continue
+            cid, name = names.get(str(x.get("character", "")).lower()), str(x.get("name", "")).strip()
+            if cid and name and (cid, name.lower()) not in outfit_ids:
+                outfit = {"id": new_id("o"), "character": cid, "name": name[:60], "look": str(x.get("look", ""))[:2000]}
+                p["outfits"].append(outfit)
+                outfit_ids[(cid, name.lower())] = outfit["id"]
     out = []
     for s in shots:
         if not isinstance(s, dict):
@@ -326,8 +361,20 @@ def write_shots(p, replace):
             seconds = max(4, min(15, int(round(float(s.get("seconds", 6))))))
         except (TypeError, ValueError):
             seconds = 6
+        cast = {}
+        for m in s.get("cast") or []:
+            cid = names.get(str(m.get("character", "")).lower()) if isinstance(m, dict) else None
+            if cid and cid not in cast:
+                cast[cid] = {"position": str(m.get("position", ""))[:80],
+                             "outfit": outfit_ids.get((cid, str(m.get("outfit", "")).strip().lower()))}
+        # Older answers list names only.
+        for n in s.get("characters") or []:
+            cid = names.get(n.lower()) if isinstance(n, str) else None
+            if cid and cid not in cast:
+                cast[cid] = {"position": "", "outfit": None}
         out.append({"id": new_id("s"), "title": str(s.get("title", ""))[:80],
-                    "characters": [names[n.lower()] for n in s.get("characters", []) if isinstance(n, str) and n.lower() in names],
+                    "characters": list(cast), "cast": cast,
+                    "place": place_ids.get(str(s.get("place", "")).strip().lower()),
                     "seconds": seconds, "still_prompt": str(s.get("still_prompt", "")),
                     "motion_prompt": fields_only(str(s.get("motion_prompt", ""))), "review": "pending"})
     with lock:
@@ -337,6 +384,70 @@ def write_shots(p, replace):
             p["shots"].extend(out)
         log(p, f"{model} wrote {len(out)} shots")
         save(p)
+
+
+def looks_for_llm(p):
+    names = {c["id"]: c["name"] for c in p["characters"]}
+    return {"places": [{"name": x["name"], "look": x["look"]} for x in p["places"]],
+            "outfits": [{"character": names.get(x["character"], "?"), "name": x["name"], "look": x["look"]}
+                        for x in p["outfits"]]}
+
+
+# --- What Krea gets for a still ------------------------------------------------------------
+
+# Where people stand when a shot doesn't say (older shots, shots added by hand).
+DEFAULT_POSITIONS = {1: [""], 2: ["on the left", "on the right"], 3: ["on the left", "in the centre", "on the right"]}
+
+
+def cast_of(p, s):
+    """The shot's people with a reference photo, in photo order: [(character, position, outfit look)]."""
+    chars = [c for c in (find(p["characters"], cid) for cid in s["characters"]) if c and c.get("ref")]
+    defaults = DEFAULT_POSITIONS.get(len(chars), [""] * len(chars))
+    out = []
+    for i, c in enumerate(chars):
+        m = (s.get("cast") or {}).get(c["id"]) or {}
+        outfit = find(p["outfits"], m.get("outfit")) if m.get("outfit") else None
+        out.append((c, (m.get("position") or "").strip() or defaults[i], outfit["look"] if outfit else ""))
+    return out
+
+
+def name_to(text, name, label):
+    """Replaces a character's name (and "Name's") in a prompt with a label."""
+    text = re.sub(rf"\b{re.escape(name)}'s\b", label + "'s", text, flags=re.I)
+    return re.sub(rf"\b{re.escape(name)}\b", label, text, flags=re.I)
+
+
+def still_prompts(p, s):
+    """One prompt per identity pass (one per person with a photo), or one without people.
+
+    Krea doesn't know names: what ties a person to a photo is the pass. Pass 1 has the first
+    person's photo and stages the whole scene, the others as stand-ins at their positions;
+    each further pass swaps one stand-in for the person in its photo, keeping the rest."""
+    place = find(p["places"], s.get("place")) if s.get("place") else None
+    setting = f"\n\nThe place: {place['look']}" if place and place["look"].strip() else ""
+    cast = cast_of(p, s)
+    prompt = s["still_prompt"].strip()
+    if not cast:
+        return [prompt + setting]
+    first = cast[0]
+    label = lambda c, pos: f"the person {pos}" if pos else "the person"
+    scene = prompt
+    for c, pos, _ in cast:
+        scene = name_to(scene, c["name"], "the person from the photo" if c is first[0] else label(c, pos))
+    scene = re.sub(r"(^|[.!?]\s+)the person", lambda m: m.group(1) + "The person", scene)
+    who = []
+    for c, pos, look in cast:
+        if len(cast) == 1 and not look:
+            break
+        it = "The person from the photo" + (f" is {pos}" if pos and len(cast) > 1 else "") if c is first[0] \
+            else f"Another person is {pos}" if pos else "Another person is in the shot"
+        who.append(it + (f" and wears {look}" if look and c is not first[0] else f", wearing {look}" if look else "") + ".")
+    passes = [scene + ("\n\n" + " ".join(who) if who else "") + setting]
+    for c, pos, look in cast[1:]:
+        passes.append(f"Replace {label(c, pos)} in the first image with the person from the second image, "
+                      f"in the same pose, place and framing" + (f", wearing {look}" if look else "")
+                      + ". Keep everything else in the first image exactly as it is.")
+    return passes
 
 
 def fields_only(motion):
@@ -355,7 +466,11 @@ def rewrite_prompt(p, s):
     with lock:
         names = ", ".join(c["name"] for c in p["characters"] if c["id"] in s["characters"]) or "nobody recurring"
         draft = s["motion_prompt"]
-        user = (f"First frame (the still's prompt):\n{s['still_prompt'] or '(none)'}\n\nCharacters in it: {names}\n"
+        place = find(p["places"], s.get("place")) if s.get("place") else None
+        looks = "".join(f"\n{c['name']} {pos or ''} wears: {look}" for c, pos, look in cast_of(p, s) if look)
+        user = (f"First frame (the still's prompt):\n{s['still_prompt'] or '(none)'}"
+                + (f"\nThe place: {place['look']}" if place else "") + looks
+                + f"\n\nCharacters in it: {names}\n"
                 f"Length: {s['seconds']} seconds\n\nDraft motion prompt:\n{draft or '(none: invent fitting motion and sound)'}")
     text = llm(with_guide(REWRITE_PROMPT), user, p.get("llm") or LLM_MODEL)
     at = text.find("integrated_multimodal_description:")
@@ -385,13 +500,12 @@ def render(p, s, kind):
     up = {}
     seed = random.randrange(1, 2**31)
     if kind == "still":
-        refs = []
-        for cid in s["characters"]:
-            c = find(p["characters"], cid)
-            if c and c.get("ref"):
-                refs.append(upload_once(os.path.join(project_dir(pid), c["ref"]), f"studio_{pid}_{c['ref'].split('/')[-1]}", up))
+        with lock:
+            photos = [c["ref"] for c, _, _ in cast_of(p, s)]
+            prompts = still_prompts(p, s)
+        refs = [upload_once(os.path.join(project_dir(pid), ref), f"studio_{pid}_{ref.split('/')[-1]}", up) for ref in photos]
         name = f"still-{seed}.png"
-        took = comfy.run(wf.still(s["still_prompt"], refs, sizes["final"], seed, f"studio/{pid}/{sid}"),
+        took = comfy.run(wf.still(prompts, refs, sizes["final"], seed, f"studio/{pid}/{sid}"),
                          os.path.join(out, name), stop)
         return "still", {"file": name, "seed": seed, "took": took, "at": int(time.time())}
     if kind == "preview":
@@ -750,6 +864,8 @@ class Handler(BaseHTTPRequestHandler):
                     p["characters"].remove(c)
                     for s in p["shots"]:
                         s["characters"] = [x for x in s["characters"] if x != c["id"]]
+                        (s.get("cast") or {}).pop(c["id"], None)
+                    p["outfits"] = [o for o in p["outfits"] if o["character"] != c["id"]]
                     save(p)
                 return self.json(public(p))
             if len(parts) == 5 and parts[3] == "shots":
@@ -828,6 +944,16 @@ class Handler(BaseHTTPRequestHandler):
                     p["llm"] = req["llm"].strip()[:200] or None
                 if isinstance(req.get("target_shots"), int):
                     p["target_shots"] = max(1, min(200, req["target_shots"]))
+                if isinstance(req.get("places"), list):
+                    p["places"] = [{"id": x.get("id") if ID.match(str(x.get("id", ""))) else new_id("l"),
+                                    "name": str(x.get("name", ""))[:60], "look": str(x.get("look", ""))[:2000]}
+                                   for x in req["places"][:50] if isinstance(x, dict)]
+                if isinstance(req.get("outfits"), list):
+                    chars = {c["id"] for c in p["characters"]}
+                    p["outfits"] = [{"id": x.get("id") if ID.match(str(x.get("id", ""))) else new_id("o"),
+                                     "character": x["character"], "name": str(x.get("name", ""))[:60],
+                                     "look": str(x.get("look", ""))[:2000]}
+                                    for x in req["outfits"][:100] if isinstance(x, dict) and x.get("character") in chars]
                 save(p)
                 return self.json(public(p))
             if what == "characters" and len(parts) == 4:
@@ -862,6 +988,18 @@ class Handler(BaseHTTPRequestHandler):
                 if isinstance(req.get("characters"), list):
                     ids = {c["id"] for c in p["characters"]}
                     s["characters"] = [x for x in req["characters"] if x in ids]
+                if "place" in req:
+                    s["place"] = req["place"] if find(p["places"], req["place"]) else None
+                if isinstance(req.get("cast"), dict):
+                    cast = s.setdefault("cast", {})
+                    for cid, m in req["cast"].items():
+                        if cid in s["characters"] and isinstance(m, dict):
+                            cur = cast.setdefault(cid, {"position": "", "outfit": None})
+                            if isinstance(m.get("position"), str):
+                                cur["position"] = m["position"][:80]
+                            if "outfit" in m:
+                                o = find(p["outfits"], m["outfit"]) if m["outfit"] else None
+                                cur["outfit"] = o["id"] if o and o["character"] == cid else None
                 if req.get("review") in ("pending", "approved", "rejected"):
                     s["review"] = req["review"]
                 if isinstance(req.get("move"), int):

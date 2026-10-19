@@ -75,10 +75,11 @@ def _save_video(g, images, audio, prefix, crf=16):
         "format.codec.encoding.crf": float(crf)})
 
 
-def still(prompt, refs, size, seed, prefix, steps=8, ref_boost=2.0):
+def still(prompts, refs, size, seed, prefix, steps=8, ref_boost=2.0):
     """Krea 2 Turbo. With references (uploaded image names, one per character): the Krea 2
-    Identity Edit V2 LoRA, one pass per person; the first restages person 1, each further pass
-    keeps the picture so far (aligned) and adds the next person (beside)."""
+    Identity Edit V2 LoRA, one pass per person, each with its own prompt; the first restages
+    person 1, each further pass keeps the picture so far (aligned) and brings in the next
+    person (beside)."""
     g = Graph()
     w, h = size
     unet = g.add("UNETLoader", unet_name=KREA_UNET, weight_dtype="default")
@@ -86,7 +87,7 @@ def still(prompt, refs, size, seed, prefix, steps=8, ref_boost=2.0):
     vae = g.add("VAELoader", vae_name=KREA_VAE)
     target = g.add("EmptySD3LatentImage", width=w, height=h, batch_size=1)
     if not refs:
-        pos = g.add("CLIPTextEncode", clip=[clip, 0], text=prompt)
+        pos = g.add("CLIPTextEncode", clip=[clip, 0], text=prompts[0])
         neg = g.add("ConditioningZeroOut", conditioning=[pos, 0])
         sample = g.add("KSampler", model=[unet, 0], positive=[pos, 0], negative=[neg, 0],
                        latent_image=[target, 0], seed=seed, steps=steps, cfg=1.0,
@@ -112,7 +113,7 @@ def still(prompt, refs, size, seed, prefix, steps=8, ref_boost=2.0):
             images = dict(image=[scene, 0], image_b=[person, 0])
         patched = g.add("Krea2EditModelPatch", model=[model, 0], vae=[vae, 0],
                         target_latent=[target, 0], fit_mode="fit", **patch)
-        pos = g.add("Krea2EditGroundedEncode", clip=[clip, 0], prompt=prompt, grounding_px=768,
+        pos = g.add("Krea2EditGroundedEncode", clip=[clip, 0], prompt=prompts[min(i, len(prompts) - 1)], grounding_px=768,
                     system_prompt="", **images)
         neg = g.add("Krea2EditGroundedEncode", clip=[clip, 0], prompt="", grounding_px=768,
                     system_prompt="", **images)
