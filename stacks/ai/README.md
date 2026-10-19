@@ -203,7 +203,10 @@ models). SwarmUI fetches text encoders and VAEs itself on first use.
    names, so the Studio swaps them for positions: pass 1 has the first person's photo and
    stages the whole scene ("the person from the photo is on the left", the others as stand-ins
    at their places), and each later pass replaces one stand-in ("the person on the right")
-   with the person from the next photo. Click a still to see it at full size.
+   with the person from the next photo. Click a still to see it at full size. Under the brief,
+   **LoRAs** adds Krea 2 LoRAs from SwarmUI's `Models/Lora` (the Studio reads their headers and
+   lists only Krea 2 ones), each with a strength, to the stills and place images; the character
+   photos stay without them, so the identity passes start from a neutral photo.
 3. **Previews**: MiniMax H3 animates the still at ~0.3 MP (736×416 for 16:9), with sound.
 4. **Review**: approve, retry (a new seed) or reject each preview; only approved ones go on.
 5. **Finals**: the approved preview again (same seed, frame and prompt, so the same motion),

@@ -128,6 +128,11 @@ label { font-size:11px; color:var(--muted); display:block; margin:8px 0 3px; }
   place-items:center; color:var(--faint); font-size:12px; text-align:center; cursor:pointer; padding:8px; }
 .picture .pic.has { color:transparent; cursor:zoom-in; }
 .look .img { aspect-ratio: var(--ar, 16/9); border-radius:7px; background:var(--soft) center/cover no-repeat; cursor:zoom-in; }
+/* LoRAs */
+.loras { display:grid; gap:4px; }
+.loras .row { flex-wrap:nowrap; }
+.loras select { min-width:0; flex:1; padding:4px 6px; font-size:12px; }
+.loras input { width:62px; padding:4px 6px; font-size:12px; text-align:right; }
 /* Places and outfits */
 .looks { display:grid; gap:6px; }
 .look { display:grid; gap:4px; padding:8px; border:1px solid var(--line); border-radius:10px; }
@@ -287,6 +292,8 @@ function renderProject(first) {
           ${[['clean', 'Clean: no invented detail (finish in Resolve)'], ['soft', 'Soft: SeedVR2 mixed with a plain upscale'],
              ['seedvr2', 'SeedVR2: most detail, invents skin texture']].map(([v, l]) =>
             `<option value="${v}" ${(P.upscale || 'clean') === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div></div>
+        <label>LoRAs for the stills and place images (Krea 2, from SwarmUI's Models/Lora)</label>
+        <div id="loras" class="loras"></div>
         <div class="row" style="margin-top:10px"><button class="primary" id="write">${icon('wand')}Write shot list</button>
           <label style="margin:0;display:flex;gap:5px;align-items:center"><input type="checkbox" id="replace" style="width:auto"> replace the current shots</label></div>
         <div class="row" style="margin-top:10px"><div class="grow"><label>Model for the shot list and rewrites</label>
@@ -326,7 +333,7 @@ function renderProject(first) {
     zone.ondragleave = () => zone.classList.remove('drag');
     zone.ondrop = e => { e.preventDefault(); zone.classList.remove('drag'); e.dataTransfer.files[0] && sendPicture(e.dataTransfer.files[0]); };
     armed($('pic-del'), 'Really?', () => api('DELETE', `/api/projects/${P.id}/picture`).then(d => { P = d; renderProject(false); }));
-    loadModels();
+    loadModels(); loadLoras();
     $('write').onclick = async () => {
       await save('brief', $('p-brief').value);
       await api('POST', `/api/projects/${P.id}/run`, {kind: 'shots', replace: $('replace').checked}); poll();
@@ -509,6 +516,33 @@ function isRunning(s, kind) {
   return r && r.project === P.id && r.shot === s.id && (!kind || r.kind === kind);
 }
 function isQueued(s, kind) { return (STATE.queue || []).some(t => t.project === P.id && t.shot === s.id && t.kind === kind); }
+// LoRAs: the installed Krea 2 ones; the project keeps [{file, strength}].
+let LORAS = null;
+async function loadLoras() {
+  try { LORAS = (await api('GET', '/api/loras')).loras; } catch (e) { return; }
+  renderLoras();
+}
+function renderLoras() {
+  const box = $('loras'); if (!box || !LORAS) return;
+  const cur = P.loras || [], title = f => (LORAS.find(x => x.file === f) || {}).title || f + ' (not installed)';
+  const opts = sel => LORAS.map(x => `<option value="${esc(x.file)}" title="${esc(x.file)}" ${x.file === sel ? 'selected' : ''}>${esc(x.title)}</option>`).join('')
+    + (sel && !LORAS.some(x => x.file === sel) ? `<option value="${esc(sel)}" selected>${esc(title(sel))}</option>` : '');
+  box.innerHTML = cur.map((x, i) => `<div class="row" data-i="${i}"><select class="f">${opts(x.file)}</select>
+      <input class="w" type="number" step="0.05" min="-2" max="2" value="${x.strength}" title="Strength">
+      <button class="small x" title="Remove">${icon('x')}</button></div>`).join('')
+    + (LORAS.length ? `<div><button class="small" id="add-lora" ${cur.length >= 4 ? 'disabled' : ''}>${icon('plus')}LoRA</button>
+      <span class="hint">${cur.length ? 'Strong styles can fight the identity LoRA: 0.5-0.8 is a good start.' : 'None: Krea 2 as it is.'}</span></div>`
+      : '<div class="hint">No Krea 2 LoRAs in SwarmUI\'s Models/Lora.</div>');
+  const send = list => api('POST', `/api/projects/${P.id}/update`, {loras: list}).then(d => { P = d; renderLoras(); });
+  box.querySelectorAll('[data-i]').forEach(r => {
+    const i = +r.dataset.i, edit = c => send(cur.map((x, j) => j === i ? {...x, ...c} : x));
+    r.querySelector('.f').onchange = e => edit({file: e.target.value});
+    r.querySelector('.w').onchange = e => edit({strength: parseFloat(e.target.value) || 0});
+    r.querySelector('.x').onclick = () => send(cur.filter((_, j) => j !== i));
+  });
+  const add = $('add-lora'); if (add) add.onclick = () => send([...cur, {file: (LORAS.find(x => !cur.some(c => c.file === x.file)) || LORAS[0]).file, strength: 0.8}]);
+}
+
 // The models the shot list can use (the switcher's and Ollama's, as in Open WebUI).
 async function loadModels() {
   let d; try { d = await api('GET', '/api/models'); } catch (e) { return; }
@@ -604,7 +638,7 @@ function updateShot(el, s, i) {
 
   const st = s.state;
   fill(el.querySelector('.s-still'), s, 'still', s.still && `<img src="${media(s, s.still.file)}" alt="">`,
-    s.still ? `seed ${s.still.seed} · ${s.still.took}s` : '', [['redo', s.still ? 'New still' : 'Make', () => run('still', s)]]);
+    s.still ? (s.still.picture ? 'the picture' : `seed ${s.still.seed} · ${s.still.took}s`) + (s.still.loras ? ' · LoRA' : '') : '', [['redo', s.still ? 'New still' : 'Make', () => run('still', s)]]);
   fill(el.querySelector('.s-preview'), s, 'preview', s.preview && `<video src="${media(s, s.preview.file)}" controls loop playsinline preload="metadata"></video>`,
     s.preview ? (st.preview_outdated ? (st.prompt_changed ? 'prompt changed' : 'new still since') : `${s.preview.took}s`) : '',
     [...(s.preview ? [['check', s.review === 'approved' ? 'Approved' : 'Approve', () => patch(s, {review: s.review === 'approved' ? 'pending' : 'approved'}), s.review === 'approved']] : []),

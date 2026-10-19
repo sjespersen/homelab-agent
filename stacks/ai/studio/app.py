@@ -457,7 +457,9 @@ def make_looks(p, up):
         else:
             file = f"refs/{x['id']}-{int(time.time())}.png"
             prompt = f"Wide establishing photo of an empty place, no people: {x['look']}"
-            comfy.run(wf.still([prompt], [], sizes["final"], seed, f"studio/{p['id']}/looks"),
+            loras, triggers = project_loras(p)
+            comfy.run(wf.still(with_triggers([prompt], triggers), [], sizes["final"], seed, f"studio/{p['id']}/looks",
+                               loras=loras),
                       os.path.join(project_dir(p["id"]), file), stop)
             with lock:
                 x["image"] = file
@@ -704,12 +706,14 @@ def render(p, s, kind, up):
         with lock:
             photos = [(c["ref"], c.get("box")) for c, _, _ in cast_of(p, s)]
             prompts = still_prompts(p, s)
+        loras, triggers = project_loras(p)
         refs = [(upload_once(os.path.join(project_dir(pid), ref), f"studio_{pid}_{ref.split('/')[-1]}", up), box)
                 for ref, box in photos]
         name = f"still-{seed}.png"
-        took = comfy.run(wf.still(prompts, refs, sizes["final"], seed, f"studio/{pid}/{sid}"),
-                         os.path.join(out, name), stop)
-        return "still", {"file": name, "seed": seed, "took": took, "at": int(time.time())}
+        took = comfy.run(wf.still(with_triggers(prompts, triggers), refs, sizes["final"], seed, f"studio/{pid}/{sid}",
+                                  loras=loras), os.path.join(out, name), stop)
+        return "still", {"file": name, "seed": seed, "took": took, "at": int(time.time()),
+                         **({"loras": [f"{os.path.splitext(f)[0]} {w:g}" for f, w in loras]} if loras else {})}
     if kind == "preview":
         still = s["still"]["file"]
         frame = upload_once(os.path.join(out, still), f"studio_{pid}_{sid}_{still}", up)
@@ -916,6 +920,54 @@ def public(p):
     return out
 
 
+lora_info = {}  # path -> (mtime, info)
+
+
+def krea_loras():
+    """The Krea 2 LoRAs in SwarmUI's Models/Lora (not the Studio's own), from their safetensors
+    headers: [{"file", "title", "trigger"}]. A LoRA without metadata counts when its weights
+    look like Krea 2's (the identity LoRA's key names)."""
+    root = os.path.join(MODELS, "Lora")
+    out = []
+    for folder, _, files in os.walk(root):
+        for f in sorted(files):
+            if not f.endswith(".safetensors"):
+                continue
+            path = os.path.join(folder, f)
+            rel = os.path.relpath(path, root)
+            if rel in wf.OWN_LORAS:
+                continue
+            try:
+                mtime = os.path.getmtime(path)
+                if lora_info.get(path, (None,))[0] != mtime:
+                    with open(path, "rb") as fh:
+                        n = struct.unpack("<Q", fh.read(8))[0]
+                        head = json.loads(fh.read(min(n, 64 * 1024 * 1024)))
+                    meta = head.get("__metadata__") or {}
+                    krea = meta.get("ss_base_model_version") == "krea2" \
+                        or str(meta.get("modelspec.architecture", "")).startswith("krea-2") \
+                        or (not meta and any(k.startswith("diffusion_model.blocks.0.attn.gate") for k in head))
+                    lora_info[path] = (mtime, {"file": rel, "title": meta.get("modelspec.title") or os.path.splitext(f)[0],
+                                               "trigger": str(meta.get("modelspec.trigger_phrase") or "").strip(),
+                                               "krea": krea})
+            except (OSError, ValueError, struct.error):
+                continue
+            if lora_info[path][1]["krea"]:
+                out.append({k: v for k, v in lora_info[path][1].items() if k != "krea"})
+    return out
+
+
+def project_loras(p):
+    """The project's LoRAs that are still installed: [(file, strength)], and their trigger phrases."""
+    have = {x["file"]: x for x in krea_loras()}
+    chosen = [x for x in p.get("loras") or [] if x.get("file") in have]
+    return [(x["file"], x["strength"]) for x in chosen], [have[x["file"]]["trigger"] for x in chosen if have[x["file"]]["trigger"]]
+
+
+def with_triggers(prompts, triggers):
+    return [", ".join(triggers) + ". " + x if triggers else x for x in prompts]
+
+
 def missing_models(kind=None):
     names = wf.NEEDS.get(kind, []) if kind else wf.MODEL_FILES
     return [n for n in names if not os.path.exists(os.path.join(MODELS, wf.MODEL_FILES[n], n))]
@@ -993,6 +1045,8 @@ class Handler(BaseHTTPRequestHandler):
                     "running": task and {**task, "since": current["since"]},
                     "queue": queue, "history": history, "missing": missing_models(),
                     "llm": LLM_MODEL, "sizes": wf.SIZES, "now": time.time()})
+        if parts == ["api", "loras"]:
+            return self.json({"loras": krea_loras()})
         if parts == ["api", "models"]:
             try:
                 return self.json({"models": llm_models(), "default": LLM_MODEL})
@@ -1231,6 +1285,16 @@ class Handler(BaseHTTPRequestHandler):
                     p["refine"] = req["refine"]
                 if isinstance(req.get("llm"), str):
                     p["llm"] = req["llm"].strip()[:200] or None
+                if isinstance(req.get("loras"), list):
+                    have = {x["file"] for x in krea_loras()}
+                    p["loras"] = []
+                    for x in req["loras"][:4]:
+                        try:
+                            strength = max(-2.0, min(2.0, float(x.get("strength", 0.8))))
+                        except (TypeError, ValueError, AttributeError):
+                            continue
+                        if isinstance(x, dict) and x.get("file") in have:
+                            p["loras"].append({"file": x["file"], "strength": round(strength, 2)})
                 if req.get("upscale") in wf.UPSCALE_MODES:
                     p["upscale"] = req["upscale"]
                 if isinstance(req.get("vision_llm"), str):

@@ -76,15 +76,21 @@ def _save_video(g, images, audio, prefix, crf=16):
         "format.codec.encoding.crf": float(crf)})
 
 
-def still(prompts, refs, size, seed, prefix, steps=8, ref_boost=2.0):
+# The Studio's own LoRAs: never offered as a style.
+OWN_LORAS = {KREA_IDENTITY, H3_TURBO}
+
+
+def still(prompts, refs, size, seed, prefix, steps=8, ref_boost=2.0, loras=()):
     """Krea 2 Turbo. With references ((uploaded image name, box or None), one per character; a
     box [x1, y1, x2, y2] crops the person out of a bigger picture): the Krea 2
     Identity Edit V2 LoRA, one pass per person, each with its own prompt; the first restages
     person 1, each further pass keeps the picture so far (aligned) and brings in the next
-    person (beside)."""
+    person (beside). `loras`: [(file, strength)] the project adds (styles), under the identity one."""
     g = Graph()
     w, h = size
     unet = g.add("UNETLoader", unet_name=KREA_UNET, weight_dtype="default")
+    for name, strength in loras:
+        unet = g.add("LoraLoaderModelOnly", model=[unet, 0], lora_name=name, strength_model=float(strength))
     clip = g.add("CLIPLoader", clip_name=KREA_CLIP, type="krea2", device="default")
     vae = g.add("VAELoader", vae_name=KREA_VAE)
     target = g.add("EmptySD3LatentImage", width=w, height=h, batch_size=1)
