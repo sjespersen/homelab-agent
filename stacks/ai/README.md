@@ -183,6 +183,14 @@ models). SwarmUI fetches text encoders and VAEs itself on first use.
    Each project picks its model under the brief, from the same list as Open WebUI: Qwen3.8-27B,
    Flash-Next, and whatever you download into Ollama there (`AI_STUDIO_LLM` is the default for
    new projects). Small Ollama models (8-14B) work but write weaker H3 prompts.
+   **Or start from a picture**: drop one under the brief (the page cuts it to the format, at the
+   final size) and say in the brief what should happen. A model that can see (one with vision
+   in Ollama, like Qwen3.8 or Gemma 3; pick it there) reads the place, each person's outfit,
+   position and box, and a prompt for the picture; the shot list starts with the picture as
+   shot 1's still, and the people become characters. Then Krea makes each person a full-body
+   reference photo on a plain background (the identity LoRA restages their crop in the outfit
+   read from the picture) and an image of each place, so one picture builds the whole project.
+   Rename "Person 1" and the prompts follow.
    The model also writes the film's **places and outfits** once (the room, its furniture and
    light; each garment and what isn't worn), and each shot names its place and, per person,
    an outfit and where they stand in the frame. Edit them under **Places and outfits** and in a

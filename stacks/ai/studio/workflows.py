@@ -30,6 +30,7 @@ MODEL_FILES = {
 # Which files each step needs.
 NEEDS = {
     "still": [KREA_UNET, KREA_CLIP, KREA_VAE, KREA_IDENTITY],
+    "looks": [KREA_UNET, KREA_CLIP, KREA_VAE, KREA_IDENTITY],
     "preview": [H3_UNET, H3_CLIP, H3_VAE, H3_AUDIO_VAE, H3_TURBO],
     "final": [H3_UNET, H3_CLIP, H3_VAE, H3_AUDIO_VAE, H3_TURBO, H3_UPSCALER],
     "upscale": [SEEDVR2_UNET, SEEDVR2_VAE],
@@ -76,7 +77,8 @@ def _save_video(g, images, audio, prefix, crf=16):
 
 
 def still(prompts, refs, size, seed, prefix, steps=8, ref_boost=2.0):
-    """Krea 2 Turbo. With references (uploaded image names, one per character): the Krea 2
+    """Krea 2 Turbo. With references ((uploaded image name, box or None), one per character; a
+    box [x1, y1, x2, y2] crops the person out of a bigger picture): the Krea 2
     Identity Edit V2 LoRA, one pass per person, each with its own prompt; the first restages
     person 1, each further pass keeps the picture so far (aligned) and brings in the next
     person (beside)."""
@@ -98,7 +100,11 @@ def still(prompts, refs, size, seed, prefix, steps=8, ref_boost=2.0):
     model = g.add("LoraLoaderModelOnly", model=[unet, 0], lora_name=KREA_IDENTITY, strength_model=1.0)
     scene = None  # the picture so far, after the first person
     for i, ref in enumerate(refs):
-        person = g.add("LoadImage", image=ref)
+        name, box = ref if isinstance(ref, tuple) else (ref, None)
+        person = g.add("LoadImage", image=name)
+        if box:
+            x1, y1, x2, y2 = box
+            person = g.add("ImageCrop", image=[person, 0], width=x2 - x1, height=y2 - y1, x=x1, y=y1)
         person_latent = g.add("VAEEncode", pixels=[person, 0], vae=[vae, 0])
         if scene is None:
             patch = dict(source_latent=[person_latent, 0], source_image=[person, 0],

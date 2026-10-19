@@ -8,6 +8,7 @@ Projects (brief, characters, reference photos, the shot list) live in DATA, whic
 the renders in MEDIA, on the models disk. One job runs at a time; the jobs ask the switcher for
 the GPU (Qwen for the shot list, SwarmUI for the rest) and hold it while they run.
 """
+import base64
 import hashlib
 import hmac
 import json
@@ -16,6 +17,7 @@ import random
 import re
 import secrets
 import shutil
+import struct
 import threading
 import time
 import traceback
@@ -40,7 +42,7 @@ SESSION = hmac.new(API_KEY.encode(), b"ai-switcher-session", hashlib.sha256).hex
 COOKIE = "ai_session"
 MAX_UPLOAD = 25 * 1024 * 1024
 ID = re.compile(r"^[a-z0-9-]{1,48}$")
-KINDS = ("shots", "prompt", "still", "preview", "final", "upscale")
+KINDS = ("shots", "looks", "prompt", "still", "preview", "final", "upscale")
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 lock = threading.RLock()       # the projects and the queue
@@ -203,9 +205,36 @@ def llm_models():
             tags = {}
         # hf.co/org/Some-Model-GGUF:Q5_K_M -> Some-Model-GGUF:Q5_K_M, as Open WebUI shows it.
         out += [{"id": m["name"], "label": m["name"].rsplit("/", 1)[-1].removesuffix(":latest"),
-                 "service": ollama["id"], "via": "ollama"}
+                 "service": ollama["id"], "via": "ollama", "vision": sees(m)}
                 for m in sorted(tags.get("models", []), key=lambda m: m.get("name", "")) if m.get("name")]
     return out
+
+
+capabilities = {}  # an Ollama model's digest -> its capabilities ("vision", "tools", ...)
+
+
+def sees(m):
+    """Whether an Ollama model reads images (its /api/show capabilities)."""
+    digest = m.get("digest") or m["name"]
+    if digest not in capabilities:
+        try:
+            capabilities[digest] = switcher("POST", "/ollama/api/show", {"model": m["name"]}, timeout=20).get("capabilities") or []
+        except RuntimeError:
+            return False
+    return "vision" in capabilities[digest]
+
+
+def vision_model(p):
+    """The model that reads a project's picture: the chosen one, else the first that can see
+    (Qwen first)."""
+    seeing = [m for m in llm_models() if m.get("vision")]
+    chosen = next((m for m in seeing if m["id"] == p.get("vision_llm")), None)
+    if chosen:
+        return chosen["id"]
+    seeing.sort(key=lambda m: "qwen" not in m["id"].lower())
+    if not seeing:
+        raise RuntimeError("no model on this box reads pictures: download one with vision in Open WebUI (Qwen3.8, Gemma 3)")
+    return seeing[0]["id"]
 
 
 def hold_loop():
@@ -292,7 +321,7 @@ def with_guide(system):
     return out
 
 
-def llm(system, user, model):
+def llm(system, user, model, images=()):
     found = next((m for m in llm_models() if m["id"] == model), None)
     if found is None:
         raise RuntimeError(f"{model} isn't on this box (any more); pick another model")
@@ -301,7 +330,10 @@ def llm(system, user, model):
         # Ollama's own API: its OpenAI one can't set the context, and the guide needs ~8K.
         path = "/ollama/api/chat"
         body = {"model": model, "stream": False, "options": {"num_ctx": 32768, "temperature": 0.7},
-                "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
+                "messages": [{"role": "system", "content": system},
+                             {"role": "user", "content": user, **({"images": list(images)} if images else {})}]}
+    elif images:
+        raise RuntimeError(f"{model} doesn't read pictures here")
     else:
         path = "/v1/chat/completions"
         body = {"model": model, "max_tokens": 30000, "temperature": 0.7,
@@ -319,14 +351,141 @@ def llm(system, user, model):
     return answer["choices"][0]["message"].get("content") or ""
 
 
+PICTURE_PROMPT = """You read one picture for an AI film pipeline. It is the first frame of the film's first shot; the rest of the film must match it. Answer with JSON only, no other text:
+{"still_prompt": "...", "place": {"name": "short name", "look": "..."},
+ "people": [{"name": "...", "who": "...", "outfit": "...", "position": "...", "box": [x1, y1, x2, y2]}]}
+
+- still_prompt: this picture as a prompt for an image model: the framing, the camera angle, how much of each person is visible, their poses and expressions, which part of the place is seen, and the light by where it lands. Refer to people by name. Don't describe faces.
+- place.look: the room or landscape, the furniture and props and where they stand, colours and materials, the time of day, and the light sources and where they are. Concrete enough to draw it again from another angle.
+- people: everyone who matters in the picture. name: the user's name for them if the text or the known characters say who they are, else "Person 1", "Person 2", ... who: apparent age, build, hair. outfit: each garment with colour and material, shoes, hair, jewellery. position: where they are in the frame ("on the left", "on the right", "in the centre", "in the background"), different for each. box: from the top of the head down to as much of the body as is visible, on a 0-1000 scale of the picture's width and height.
+"""
+
+
+def png_size(path):
+    with open(path, "rb") as f:
+        head = f.read(24)
+    return struct.unpack(">II", head[16:24])
+
+
+def read_picture(p):
+    """The vision model's reading of the project's picture: still_prompt, place, people."""
+    path = os.path.join(project_dir(p["id"]), p["picture"]["file"])
+    with open(path, "rb") as f:
+        image = base64.b64encode(f.read()).decode()
+    chars = ", ".join(f"{c['name']} ({c.get('description') or 'no description'})" for c in p["characters"]) or "none"
+    model = vision_model(p)
+    text = llm(PICTURE_PROMPT, f"What should happen (the user's text):\n{p['brief']}\n\nKnown characters: {chars}",
+               model, [image])
+    start, end = text.find("{"), text.rfind("}")
+    try:
+        answer = json.loads(text[start:end + 1])
+    except ValueError:
+        raise RuntimeError(f"{model} didn't describe the picture: " + text[:300]) from None
+    with lock:
+        log(p, f"{model} read the picture")
+    return answer if isinstance(answer, dict) else {}
+
+
+def take_picture(p, reading):
+    """Puts what the picture showed into the project: its place, a character per person (the
+    photo: their box in the picture) and their outfits. Returns the text for the shot list."""
+    w, h = p["picture"]["w"], p["picture"]["h"]
+    place = reading.get("place") if isinstance(reading.get("place"), dict) else {}
+    lines = [f"The film opens on a picture the user gave; shot 1 starts from exactly this picture. "
+             f"Copy this as shot 1's still_prompt:\n{reading.get('still_prompt', '')}"]
+    if place.get("look"):
+        p["places"].append({"id": new_id("l"), "name": str(place.get("name") or "The picture")[:60],
+                            "look": str(place["look"])[:2000]})
+        lines.append(f"Shot 1's place is {p['places'][-1]['name']}.")
+    by_name = {c["name"].lower(): c for c in p["characters"]}
+    for i, person in enumerate(reading.get("people") or []):
+        if not isinstance(person, dict):
+            continue
+        name = str(person.get("name") or f"Person {i + 1}").strip()[:40]
+        c = by_name.get(name.lower())
+        if c is None:
+            c = {"id": new_id("c"), "name": name, "description": str(person.get("who", ""))[:1000], "ref": None}
+            p["characters"].append(c)
+            by_name[name.lower()] = c
+        box = person.get("box")
+        if not c.get("ref") and isinstance(box, list) and len(box) == 4 and all(isinstance(v, (int, float)) for v in box):
+            x1, y1, x2, y2 = (max(0, min(1000, v)) for v in box)
+            if x2 - x1 > 20 and y2 - y1 > 20:
+                # A little room around them, in the picture's pixels.
+                pad_x, pad_y = (x2 - x1) * 0.08, (y2 - y1) * 0.04
+                c["ref"] = p["picture"]["file"]
+                c["box"] = [int(max(0, x1 - pad_x) * w / 1000), int(max(0, y1 - pad_y) * h / 1000),
+                            int(min(1000, x2 + pad_x) * w / 1000), int(min(1000, y2 + pad_y) * h / 1000)]
+        if person.get("outfit"):
+            p["outfits"].append({"id": new_id("o"), "character": c["id"], "name": "in the picture",
+                                 "look": str(person["outfit"])[:2000]})
+        lines.append(f"{name} is {person.get('position') or 'in the picture'}, wearing the outfit \"in the picture\".")
+    return "\n".join(lines)
+
+
+PORTRAIT = (768, 1024)  # character photos: full body, upright
+
+
+def make_looks(p):
+    """From the project's descriptions: a reference photo for each character cut out of the
+    picture (the identity LoRA restages the crop full body on a plain background, in their
+    outfit, which is the photo the stills work best from) and an image of each place."""
+    need_swarmui()
+    stop = lambda: current["stop"]
+    up = {}
+    with lock:
+        todo = [("character", c) for c in p["characters"] if c.get("box")] + \
+               [("place", x) for x in p["places"] if not x.get("image") and x["look"].strip()]
+    sizes = wf.SIZES.get(p["aspect"], wf.SIZES["16:9"])
+    for what, x in todo:
+        seed = random.randrange(1, 2**31)
+        if what == "character":
+            with lock:
+                outfit = next((o["look"] for o in p["outfits"] if o["character"] == x["id"]), "")
+                ref, box = x["ref"], list(x["box"])
+            name = upload_once(os.path.join(project_dir(p["id"]), ref), f"studio_{p['id']}_{ref.split('/')[-1]}", up)
+            prompt = ("Full-body photo of the person from the photo, standing upright and facing the camera, arms "
+                      "relaxed, the whole body from head to shoes in frame" + (f", wearing {outfit}" if outfit else "")
+                      + ". Plain light grey studio background, soft even light, nothing else in the picture.")
+            file = f"refs/{x['id']}-{int(time.time())}.png"
+            comfy.run(wf.still([prompt], [(name, box)], PORTRAIT, seed, f"studio/{p['id']}/looks"),
+                      os.path.join(project_dir(p["id"]), file), stop)
+            with lock:
+                x["ref"] = file
+                x.pop("box", None)
+                save(p)
+        else:
+            file = f"refs/{x['id']}-{int(time.time())}.png"
+            prompt = f"Wide establishing photo of an empty place, no people: {x['look']}"
+            comfy.run(wf.still([prompt], [], sizes["final"], seed, f"studio/{p['id']}/looks"),
+                      os.path.join(project_dir(p["id"]), file), stop)
+            with lock:
+                x["image"] = file
+                save(p)
+    with lock:
+        log(p, f"made {len(todo)} character photos and place images")
+        save(p)
+
+
 def write_shots(p, replace):
+    opening = ""
+    if p.get("picture") and (replace or not p["shots"]):
+        reading = read_picture(p)
+        with lock:
+            if replace:
+                p["places"], p["outfits"] = [], []
+                replace = "done"  # cleared already: keep what the picture added
+            opening = take_picture(p, reading)
+            save(p)
     chars = "\n".join(f"- {c['name']}: {c.get('description') or '(no description)'}"
                       for c in p["characters"]) or "(none: no recurring people)"
     user = (f"Brief:\n{p['brief']}\n\nCharacters (use these exact names):\n{chars}\n\n"
             f"Format: {p['aspect']}. About {p['target_shots']} shots.")
-    if not replace and (p["places"] or p["outfits"]):
+    if replace is not True and (p["places"] or p["outfits"]):
         user += ("\n\nThe film so far has these places and outfits; reuse them by name, list only new ones:\n"
                  + json.dumps(looks_for_llm(p), ensure_ascii=False))
+    if opening:
+        user += "\n\n" + opening
     model = p.get("llm") or LLM_MODEL
     text = llm(with_guide(SHOT_PROMPT), user, model)
     with open(os.path.join(DATA, "last-shot-list.txt"), "w", encoding="utf-8") as f:
@@ -339,7 +498,7 @@ def write_shots(p, replace):
         raise RuntimeError("the answer wasn't a shot list: " + text[:300]) from None
     names = {c["name"].lower(): c["id"] for c in p["characters"]}
     with lock:
-        if replace:
+        if replace is True:
             p["places"], p["outfits"] = [], []
         place_ids = {x["name"].lower(): x["id"] for x in p["places"]}
         outfit_ids = {(x["character"], x["name"].lower()): x["id"] for x in p["outfits"]}
@@ -381,12 +540,20 @@ def write_shots(p, replace):
                     "seconds": seconds, "still_prompt": str(s.get("still_prompt", "")),
                     "motion_prompt": fields_only(motion_of(s)), "review": "pending"})
     with lock:
+        if opening and out:
+            # Shot 1's still is the picture itself.
+            os.makedirs(media_dir(p["id"], out[0]["id"]), exist_ok=True)
+            name = f"still-picture-{int(time.time())}.png"
+            shutil.copyfile(os.path.join(project_dir(p["id"]), p["picture"]["file"]),
+                            os.path.join(media_dir(p["id"], out[0]["id"]), name))
+            out[0]["still"] = {"file": name, "seed": 0, "took": 0, "at": int(time.time()), "picture": True}
         if replace:
             p["shots"] = out
         else:
             p["shots"].extend(out)
         log(p, f"{model} wrote {len(out)} shots")
         save(p)
+    return bool(opening)
 
 
 H3_FIELDS = ("integrated_multimodal_description", "overall_soundscape", "non_diegetic_music")
@@ -520,9 +687,10 @@ def render(p, s, kind):
     seed = random.randrange(1, 2**31)
     if kind == "still":
         with lock:
-            photos = [c["ref"] for c, _, _ in cast_of(p, s)]
+            photos = [(c["ref"], c.get("box")) for c, _, _ in cast_of(p, s)]
             prompts = still_prompts(p, s)
-        refs = [upload_once(os.path.join(project_dir(pid), ref), f"studio_{pid}_{ref.split('/')[-1]}", up) for ref in photos]
+        refs = [(upload_once(os.path.join(project_dir(pid), ref), f"studio_{pid}_{ref.split('/')[-1]}", up), box)
+                for ref, box in photos]
         name = f"still-{seed}.png"
         took = comfy.run(wf.still(prompts, refs, sizes["final"], seed, f"studio/{pid}/{sid}"),
                          os.path.join(out, name), stop)
@@ -558,7 +726,9 @@ def next_task():
         if not queue:
             return None
         last = current.get("last_kind")
-        pick = next((t for t in queue if t["kind"] == last), queue[0])
+        # Character photos and place images first: the stills need them.
+        pick = next((t for t in queue if t["kind"] == "looks"), None) \
+            or next((t for t in queue if t["kind"] == last), queue[0])
         queue.remove(pick)
         return pick
 
@@ -577,7 +747,10 @@ def worker():
             if p is None:
                 raise RuntimeError("project gone")
             if task["kind"] == "shots":
-                write_shots(p, task.get("replace", False))
+                if write_shots(p, task.get("replace", False)):
+                    enqueue(p, "looks", "all")
+            elif task["kind"] == "looks":
+                make_looks(p)
             elif task["kind"] == "prompt":
                 with lock:
                     s = find(p["shots"], task["shot"])
@@ -622,9 +795,9 @@ def worker():
 
 def enqueue(p, kind, shot_ids, replace=False):
     with lock:
-        if kind == "shots":
-            if not any(t["project"] == p["id"] and t["kind"] == "shots" for t in queue):
-                queue.append({"id": new_id("t"), "project": p["id"], "kind": "shots", "replace": replace})
+        if kind in ("shots", "looks"):
+            if not any(t["project"] == p["id"] and t["kind"] == kind for t in queue):
+                queue.append({"id": new_id("t"), "project": p["id"], "kind": kind, "replace": replace})
             return 1
         added = 0
         for s in p["shots"]:
@@ -775,7 +948,7 @@ class Handler(BaseHTTPRequestHandler):
                                         key=lambda x: -x["updated"]),
                     "running": task and {**task, "since": current["since"]},
                     "queue": queue, "history": history, "missing": missing_models(),
-                    "llm": LLM_MODEL, "now": time.time()})
+                    "llm": LLM_MODEL, "sizes": wf.SIZES, "now": time.time()})
         if parts == ["api", "models"]:
             try:
                 return self.json({"models": llm_models(), "default": LLM_MODEL})
@@ -789,6 +962,15 @@ class Handler(BaseHTTPRequestHandler):
             if len(parts) == 3:
                 with lock:
                     return self.json(public(p))
+            if len(parts) == 4 and parts[3] == "picture":
+                if not p.get("picture"):
+                    return self.send(404, "no picture")
+                return self.file(os.path.join(project_dir(p["id"]), p["picture"]["file"]))
+            if len(parts) == 6 and parts[3] == "places" and parts[5] == "image":
+                x = find(p["places"], parts[4])
+                if not x or not x.get("image"):
+                    return self.send(404, "no image")
+                return self.file(os.path.join(project_dir(p["id"]), x["image"]))
             if len(parts) == 5 and parts[3] == "refs":
                 c = find(p["characters"], parts[4])
                 if not c or not c.get("ref"):
@@ -797,7 +979,7 @@ class Handler(BaseHTTPRequestHandler):
             if len(parts) == 4 and parts[3] == "export.zip":
                 return self.export(p)
         if len(parts) == 4 and parts[0] == "media" and all(ID.match(x) for x in parts[1:3]) \
-                and re.match(r"^[a-z]+-\d+\.(png|mp4)$", parts[3]):
+                and re.match(r"^[a-z]+(-[a-z]+)?-\d+\.(png|mp4)$", parts[3]):  # still-123.png, still-picture-123.png
             return self.file(os.path.join(media_dir(parts[1], parts[2]), parts[3]))
         self.send(404, "not found")
 
@@ -877,6 +1059,10 @@ class Handler(BaseHTTPRequestHandler):
                 shutil.rmtree(project_dir(p["id"]), ignore_errors=True)
                 shutil.rmtree(media_dir(p["id"]), ignore_errors=True)
                 return self.json({"deleted": p["id"]})
+            if len(parts) == 4 and parts[3] == "picture":
+                self.drop_picture(p)
+                save(p)
+                return self.json(public(p))
             if len(parts) == 5 and parts[3] == "characters":
                 c = find(p["characters"], parts[4])
                 if c:
@@ -897,11 +1083,48 @@ class Handler(BaseHTTPRequestHandler):
                 return self.json(public(p))
         self.json({"error": "not found"}, 404)
 
+    def put_picture(self, pid):
+        """PUT /api/projects/<id>/picture: the picture a film starts from, as a PNG the page
+        has already cut to the project's format and final size."""
+        try:
+            data = self.body(MAX_UPLOAD)
+        except ValueError:
+            return self.json({"error": "the picture is over 25 MB"}, 413)
+        if data[:8] != b"\x89PNG\r\n\x1a\n":
+            return self.json({"error": "a PNG, please"}, 415)
+        with lock:
+            p = projects.get(pid)
+            if p is None:
+                return self.json({"error": "not found"}, 404)
+            os.makedirs(os.path.join(project_dir(pid), "refs"), exist_ok=True)
+            self.drop_picture(p)
+            file = f"refs/picture-{int(time.time())}.png"
+            path = os.path.join(project_dir(pid), file)
+            with open(path, "wb") as f:
+                f.write(data)
+            w, h = png_size(path)
+            p["picture"] = {"file": file, "w": w, "h": h}
+            save(p)
+            return self.json(public(p))
+
+    @staticmethod
+    def drop_picture(p):
+        """Forgets the project's picture; the file goes unless a character's photo still cuts from it."""
+        old = (p.get("picture") or {}).get("file")
+        p.pop("picture", None)
+        if old and not any(c.get("ref") == old for c in p["characters"]):
+            try:
+                os.remove(os.path.join(project_dir(p["id"]), old))
+            except OSError:
+                pass
+
     def do_PUT(self):
         """PUT /api/projects/<id>/characters/<cid>/photo: the reference photo, as the body."""
         if not self.authed():
             return self.json({"error": "login needed"}, 401)
         parts = self.route()
+        if len(parts) == 4 and parts[:2] == ["api", "projects"] and parts[3] == "picture":
+            return self.put_picture(parts[2])
         if not (len(parts) == 6 and parts[:2] == ["api", "projects"] and parts[3] == "characters" and parts[5] == "photo"):
             return self.json({"error": "not found"}, 404)
         try:
@@ -918,11 +1141,12 @@ class Handler(BaseHTTPRequestHandler):
             if c is None:
                 return self.json({"error": "not found"}, 404)
             os.makedirs(os.path.join(project_dir(p["id"]), "refs"), exist_ok=True)
-            if c.get("ref"):
+            if c.get("ref") and not c.get("box"):  # a box: the project's picture, which stays
                 try:
                     os.remove(os.path.join(project_dir(p["id"]), c["ref"]))
                 except OSError:
                     pass
+            c.pop("box", None)
             c["ref"] = f"refs/{c['id']}-{int(time.time())}.{ext}"
             with open(os.path.join(project_dir(p["id"]), c["ref"]), "wb") as f:
                 f.write(data)
@@ -961,12 +1185,20 @@ class Handler(BaseHTTPRequestHandler):
                     p["refine"] = req["refine"]
                 if isinstance(req.get("llm"), str):
                     p["llm"] = req["llm"].strip()[:200] or None
+                if isinstance(req.get("vision_llm"), str):
+                    p["vision_llm"] = req["vision_llm"].strip()[:200] or None
                 if isinstance(req.get("target_shots"), int):
                     p["target_shots"] = max(1, min(200, req["target_shots"]))
                 if isinstance(req.get("places"), list):
+                    old = {x["id"]: x for x in p["places"]}
                     p["places"] = [{"id": x.get("id") if ID.match(str(x.get("id", ""))) else new_id("l"),
                                     "name": str(x.get("name", ""))[:60], "look": str(x.get("look", ""))[:2000]}
                                    for x in req["places"][:50] if isinstance(x, dict)]
+                    for x in p["places"]:
+                        was = old.get(x["id"])
+                        # An image stays while the look it was made from does.
+                        if was and was.get("image") and was["look"] == x["look"]:
+                            x["image"] = was["image"]
                 if isinstance(req.get("outfits"), list):
                     chars = {c["id"] for c in p["characters"]}
                     p["outfits"] = [{"id": x.get("id") if ID.match(str(x.get("id", ""))) else new_id("o"),
@@ -985,7 +1217,12 @@ class Handler(BaseHTTPRequestHandler):
                 if not c:
                     return self.json({"error": "not found"}, 404)
                 if isinstance(req.get("name"), str) and req["name"].strip():
-                    c["name"] = req["name"].strip()[:40]
+                    old, c["name"] = c["name"], req["name"].strip()[:40]
+                    # The prompts name people (the picture's are "Person 1", ...): rename them there too.
+                    for s in p["shots"]:
+                        if c["id"] in s["characters"]:
+                            s["still_prompt"] = name_to(s["still_prompt"], old, c["name"])
+                            s["motion_prompt"] = name_to(s["motion_prompt"], old, c["name"])
                 if isinstance(req.get("description"), str):
                     c["description"] = req["description"][:1000]
                 save(p)
@@ -1030,7 +1267,7 @@ class Handler(BaseHTTPRequestHandler):
                 kind = req.get("kind")
                 if kind not in KINDS:
                     return self.json({"error": "unknown job"}, 400)
-                if kind == "shots" and not p["brief"].strip():
+                if kind == "shots" and not p["brief"].strip() and not p.get("picture"):
                     return self.json({"error": "write the brief first"}, 400)
                 if missing_models(kind):
                     return self.json({"error": "models missing: " + ", ".join(missing_models(kind))}, 409)
