@@ -681,8 +681,7 @@ def forget_comfy(pid=None, sid=None):
     """ComfyUI's leftover copies of a project's (or a shot's, or with no pid every project's)
     uploads and renders."""
     prefix = "studio_" + (f"{pid}_" + (f"{sid}_" if sid else "") if pid else "")
-    names = [os.path.basename(x) for x in glob.glob(os.path.join(comfy.COMFY_DIR, "input", glob.escape(prefix) + "*"))
-             if ".swarmpreview." not in x]
+    names = [os.path.basename(x) for x in glob.glob(os.path.join(comfy.COMFY_DIR, "input", glob.escape(prefix) + "*"))]
     comfy.forget(names=names, output="studio/" + "/".join(x for x in (pid, sid) if x) if pid else None)
     if not pid:
         for d in glob.glob(os.path.join(comfy.COMFY_DIR, "output", "studio", "*")):

@@ -113,8 +113,9 @@ def forget(names=(), output=None):
     if not os.path.isdir(COMFY_DIR):
         return
     for name in names:
-        for path in glob.glob(os.path.join(COMFY_DIR, "input", glob.escape(name) + "*")):
-            if os.path.basename(path) == name or os.path.basename(path).startswith(name + ".swarmpreview."):
+        stem = os.path.splitext(name)[0]  # SwarmUI's previews: <stem>.swarmpreview.jpg / .webp
+        for path in glob.glob(os.path.join(COMFY_DIR, "input", glob.escape(stem) + "*")):
+            if os.path.basename(path) == name or os.path.basename(path).startswith(stem + ".swarmpreview."):
                 try:
                     os.remove(path)
                 except OSError:
