@@ -135,7 +135,9 @@ def run(graph, dest, stop=lambda: False):
     """Queues the graph, waits, saves its (last) output file to dest. Returns seconds taken."""
     t = time.time()
     entry = wait(queue(graph), stop=stop)
-    files = outputs(entry)
+    # Only what the graph saved: LoadVideo lists its input too, in no fixed order, and taking
+    # that one gave an "upscale" that was the final again.
+    files = [f for f in outputs(entry) if f[2] == "output"]
     if not files:
         raise ComfyError("the graph saved nothing")
     fetch(*files[-1], dest)

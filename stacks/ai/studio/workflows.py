@@ -70,7 +70,7 @@ class Graph:
 
 
 def _save_video(g, images, audio, prefix, crf=16):
-    video = g.add("CreateVideo", images=images, audio=audio, fps=float(FPS))
+    video = g.add("CreateVideo", images=images, fps=float(FPS), **({"audio": audio} if audio else {}))
     g.add("SaveVideo", video=[video, 0], filename_prefix=prefix, **{
         "format": "mp4", "format.codec": "h264", "format.codec.encoding": "re-encode",
         "format.codec.encoding.crf": float(crf)})
@@ -189,14 +189,23 @@ def final(prompt, first_frame, preview_size, size, seconds, seed, prefix, steps=
     return g.nodes
 
 
-def upscale(video, size, seed, prefix):
+# Frames per upscale piece. SeedVR2 holds several full copies of the clip at 1080p in RAM
+# (~25 MB a frame each): a 15 s clip in one go reached 61 GB and was killed on a 64 GB box.
+UPSCALE_PIECE = 124  # ~5 s, H3's grid
+
+
+def upscale(video, size, seed, prefix, start=0, length=None):
     """SeedVR2 3B, as in ComfyUI's "Upscale Video (SeedVR2 3B Int8)", in temporal chunks so
-    a long clip fits a 16 GB card. Keeps the clip's audio and frame rate."""
+    a long clip fits a 16 GB card. Keeps the clip's audio and frame rate; with `length`, only
+    those frames from `start`, and no audio (join() puts the pieces together)."""
     g = Graph()
     w, h = size
     src = g.add("LoadVideo", file=video)
     parts = g.add("GetVideoComponents", video=[src, 0])
-    resized = g.add("ResizeImageMaskNode", input=[parts, 0], scale_method="lanczos", **{
+    frames_in = [parts, 0]
+    if length:
+        frames_in = [g.add("ImageFromBatch", image=[parts, 0], batch_index=start, length=length), 0]
+    resized = g.add("ResizeImageMaskNode", input=frames_in, scale_method="lanczos", **{
         "resize_type": "scale dimensions", "resize_type.width": w, "resize_type.height": h,
         "resize_type.crop": "center"})
     pre = g.add("SeedVR2Preprocess", resized_images=[resized, 0])
@@ -214,5 +223,18 @@ def upscale(video, size, seed, prefix):
                     temporal_size=64, temporal_overlap=8)
     post = g.add("SeedVR2PostProcessing", images=[decoded, 0], original_resized_images=[resized, 0],
                  color_correction_method="lab")
-    _save_video(g, [post, 0], [parts, 1], prefix)
+    _save_video(g, [post, 0], None if length else [parts, 1], prefix)
+    return g.nodes
+
+
+def join(pieces, audio_from, prefix):
+    """The upscaled pieces (uploaded videos, in order) as one clip, with the sound of
+    `audio_from` (the clip they came from)."""
+    g = Graph()
+    images = None
+    for piece in pieces:
+        part = g.add("GetVideoComponents", video=[g.add("LoadVideo", file=piece), 0])
+        images = [part, 0] if images is None else [g.add("ImageBatch", image1=images, image2=[part, 0]), 0]
+    sound = g.add("GetVideoComponents", video=[g.add("LoadVideo", file=audio_from), 0])
+    _save_video(g, images, [sound, 1], prefix)
     return g.nodes
