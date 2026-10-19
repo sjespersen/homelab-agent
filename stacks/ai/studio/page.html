@@ -281,9 +281,9 @@ function renderProject(first) {
             <option value="standard" ${P.refine === 'standard' ? 'selected' : ''}>Standard refine</option>
             <option value="gentle" ${P.refine === 'gentle' ? 'selected' : ''}>Gentle: closer to the preview</option></select></div></div>
         <div class="row" style="margin-top:6px"><div class="grow"><label>Upscale to 1080p</label><select id="p-upscale">
-          ${[['soft', 'Soft: SeedVR2 mixed with a plain upscale'], ['seedvr2', 'SeedVR2: most detail, invents skin texture'],
-             ['clean', 'Clean: no invented detail (finish in Resolve)']].map(([v, l]) =>
-            `<option value="${v}" ${(P.upscale || 'soft') === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div></div>
+          ${[['clean', 'Clean: no invented detail (finish in Resolve)'], ['soft', 'Soft: SeedVR2 mixed with a plain upscale'],
+             ['seedvr2', 'SeedVR2: most detail, invents skin texture']].map(([v, l]) =>
+            `<option value="${v}" ${(P.upscale || 'clean') === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div></div>
         <div class="row" style="margin-top:10px"><button class="primary" id="write">${icon('wand')}Write shot list</button>
           <label style="margin:0;display:flex;gap:5px;align-items:center"><input type="checkbox" id="replace" style="width:auto"> replace the current shots</label></div>
         <div class="row" style="margin-top:10px"><div class="grow"><label>Model for the shot list and rewrites</label>

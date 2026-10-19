@@ -194,12 +194,13 @@ def final(prompt, first_frame, preview_size, size, seconds, seed, prefix, steps=
 # 185 frames (~7.7 s) peaked at ~45 GB on the box; a 15 s clip is two pieces, one join.
 UPSCALE_PIECE = 185
 
-# How the upscale looks (a project setting):
+# How the upscale looks (a project setting; the first is the default):
+#   clean:   Lanczos only: nothing invented, as sharp as the final (finish in Resolve). Looked
+#            best in a side-by-side test: SeedVR2's invented skin texture shows even when mixed.
 #   soft:    SeedVR2, chunks crossfaded, mixed half and half with a plain Lanczos upscale; it
 #            invents less skin texture and doesn't shift from chunk to chunk.
 #   seedvr2: SeedVR2 alone, the most invented detail.
-#   clean:   Lanczos only: nothing invented, as sharp as the final (finish in Resolve).
-UPSCALE_MODES = ("soft", "seedvr2", "clean")
+UPSCALE_MODES = ("clean", "soft", "seedvr2")
 SOFT_MIX = 0.5           # the share of the plain upscale in "soft"
 CHUNK_OVERLAP = 4        # latent frames shared (and crossfaded) between SeedVR2's chunks
 

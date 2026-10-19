@@ -209,10 +209,10 @@ models). SwarmUI fetches text encoders and VAEs itself on first use.
 5. **Finals**: the approved preview again (same seed, frame and prompt, so the same motion),
    its latent upscaled by a learned H3 upscaler and refined at H3's full size (1344×768; H3
    doesn't go past 768×1344). "Gentle" in the brief's settings keeps closer to the preview.
-6. **Upscale** to 1080p, set per project: **Soft** (the default: SeedVR2 3B with its chunks
-   crossfaded, mixed half and half with a plain Lanczos upscale, so it invents less skin
-   texture and doesn't shift from chunk to chunk), **SeedVR2** alone (the most detail, and the
-   most invented), or **Clean** (Lanczos only, ~20 s; finish in Resolve). Clips over ~9 s are
+6. **Upscale** to 1080p, set per project: **Clean** (the default: Lanczos only, ~20 s, nothing
+   invented, it looked best in a side-by-side test; finish in Resolve), **Soft**
+   (SeedVR2 3B with its chunks crossfaded, mixed half and half with a plain upscale), or
+   **SeedVR2** alone (the most detail, and invented skin texture that shifts between chunks). Clips over ~9 s are
    upscaled in ~7.7 s pieces and joined, so RAM stays under ~45 GB (a 15 s clip in one go
    needed over 60).
 7. **Export for Resolve**: a zip with the clips in order, `timeline.edl` (File > Import >
@@ -226,10 +226,12 @@ are loaded; switching the GPU between Qwen and SwarmUI adds under a minute):
 | Still (Krea 2 + identity LoRA) | ~50 s | — |
 | Preview (736×416) | 1½ min | 15.8 / 11 GB |
 | Final (1344×768) | 5½ min | 15.6 / 18 GB |
-| Upscale (1920×1080, SeedVR2) | 10 min | — |
+| Upscale (1920×1080), Clean | ~20 s | — |
+| Upscale, Soft or SeedVR2 | 10 min | — / ~45 GB for long clips |
 | Rewrite for H3 (Strata) | ~1 min after a 44 s switch from SwarmUI | — / 55 GB |
 
-So a finished minute of film is roughly 2½ hours of GPU time after you approve the previews.
+So a finished minute of film is roughly 1¼ hours of GPU time after you approve the previews
+(2½ with a SeedVR2 upscale).
 
 Jobs run one at a time, grouped by kind so models load less often. The Studio asks the switcher
 for the GPU (the chosen chat model for the shot list and rewrites, SwarmUI for the rest) and holds it while it works:
