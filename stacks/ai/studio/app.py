@@ -732,16 +732,17 @@ def render(p, s, kind, up):
         name = f"upscale-{fin.split('-', 1)[1]}"
         n = wf.frames(s["final"].get("seconds") or (s.get("preview") or {}).get("seconds") or s["seconds"])
         prefix = f"studio/{pid}/{sid}"
-        if n <= wf.UPSCALE_PIECE * 1.5:
-            took = comfy.run(wf.upscale(video, sizes["upscale"], seed, prefix), os.path.join(out, name), stop)
-            return "upscale", {"file": name, "final": fin, "took": took, "at": int(time.time())}
+        mode = p.get("upscale") if p.get("upscale") in wf.UPSCALE_MODES else wf.UPSCALE_MODES[0]
+        if n <= wf.UPSCALE_PIECE * 1.2 or mode == "clean":  # clean holds no 1080p copies to speak of
+            took = comfy.run(wf.upscale(video, sizes["upscale"], seed, prefix, mode=mode), os.path.join(out, name), stop)
+            return "upscale", {"file": name, "final": fin, "mode": mode, "took": took, "at": int(time.time())}
         # Longer clips in pieces, so RAM stays at what one piece needs; then one clip again.
         took, pieces = 0, []
         try:
             for i, start in enumerate(range(0, n, wf.UPSCALE_PIECE)):
                 piece = os.path.join(out, f"piece-{seed}{i}.mp4")
-                took += comfy.run(wf.upscale(video, sizes["upscale"], seed, prefix, start, min(wf.UPSCALE_PIECE, n - start)),
-                                  piece, stop)
+                took += comfy.run(wf.upscale(video, sizes["upscale"], seed, prefix, start, min(wf.UPSCALE_PIECE, n - start),
+                                             mode), piece, stop)
                 pieces.append(piece)
             names = [upload_once(x, f"studio_{pid}_{sid}_{os.path.basename(x)}", up) for x in pieces]
             took += comfy.run(wf.join(names, video, prefix), os.path.join(out, name), stop)
@@ -751,7 +752,7 @@ def render(p, s, kind, up):
                     os.remove(x)
                 except OSError:
                     pass
-        return "upscale", {"file": name, "final": fin, "took": took, "at": int(time.time())}
+        return "upscale", {"file": name, "final": fin, "mode": mode, "took": took, "at": int(time.time())}
     raise RuntimeError(kind)
 
 
@@ -1230,6 +1231,8 @@ class Handler(BaseHTTPRequestHandler):
                     p["refine"] = req["refine"]
                 if isinstance(req.get("llm"), str):
                     p["llm"] = req["llm"].strip()[:200] or None
+                if req.get("upscale") in wf.UPSCALE_MODES:
+                    p["upscale"] = req["upscale"]
                 if isinstance(req.get("vision_llm"), str):
                     p["vision_llm"] = req["vision_llm"].strip()[:200] or None
                 if isinstance(req.get("target_shots"), int):

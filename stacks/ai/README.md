@@ -209,7 +209,12 @@ models). SwarmUI fetches text encoders and VAEs itself on first use.
 5. **Finals**: the approved preview again (same seed, frame and prompt, so the same motion),
    its latent upscaled by a learned H3 upscaler and refined at H3's full size (1344×768; H3
    doesn't go past 768×1344). "Gentle" in the brief's settings keeps closer to the preview.
-6. **Upscale**: SeedVR2 3B to 1080p, in chunks so it fits 16 GB.
+6. **Upscale** to 1080p, set per project: **Soft** (the default: SeedVR2 3B with its chunks
+   crossfaded, mixed half and half with a plain Lanczos upscale, so it invents less skin
+   texture and doesn't shift from chunk to chunk), **SeedVR2** alone (the most detail, and the
+   most invented), or **Clean** (Lanczos only, ~20 s; finish in Resolve). Clips over ~9 s are
+   upscaled in ~7.7 s pieces and joined, so RAM stays under ~45 GB (a 15 s clip in one go
+   needed over 60).
 7. **Export for Resolve**: a zip with the clips in order, `timeline.edl` (File > Import >
    Timeline, then point it at the clips folder) and the prompts. Finish (4K, grade) in Resolve.
 

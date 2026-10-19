@@ -191,13 +191,24 @@ def final(prompt, first_frame, preview_size, size, seconds, seed, prefix, steps=
 
 # Frames per upscale piece. SeedVR2 holds several full copies of the clip at 1080p in RAM
 # (~25 MB a frame each): a 15 s clip in one go reached 61 GB and was killed on a 64 GB box.
-UPSCALE_PIECE = 124  # ~5 s, H3's grid
+# 185 frames (~7.7 s) peaked at ~45 GB on the box; a 15 s clip is two pieces, one join.
+UPSCALE_PIECE = 185
+
+# How the upscale looks (a project setting):
+#   soft:    SeedVR2, chunks crossfaded, mixed half and half with a plain Lanczos upscale; it
+#            invents less skin texture and doesn't shift from chunk to chunk.
+#   seedvr2: SeedVR2 alone, the most invented detail.
+#   clean:   Lanczos only: nothing invented, as sharp as the final (finish in Resolve).
+UPSCALE_MODES = ("soft", "seedvr2", "clean")
+SOFT_MIX = 0.5           # the share of the plain upscale in "soft"
+CHUNK_OVERLAP = 4        # latent frames shared (and crossfaded) between SeedVR2's chunks
 
 
-def upscale(video, size, seed, prefix, start=0, length=None):
+def upscale(video, size, seed, prefix, start=0, length=None, mode="soft"):
     """SeedVR2 3B, as in ComfyUI's "Upscale Video (SeedVR2 3B Int8)", in temporal chunks so
-    a long clip fits a 16 GB card. Keeps the clip's audio and frame rate; with `length`, only
-    those frames from `start`, and no audio (join() puts the pieces together)."""
+    a long clip fits a 16 GB card, or a plain upscale (see UPSCALE_MODES). Keeps the clip's
+    audio and frame rate; with `length`, only those frames from `start`, and no audio
+    (join() puts the pieces together)."""
     g = Graph()
     w, h = size
     src = g.add("LoadVideo", file=video)
@@ -208,12 +219,17 @@ def upscale(video, size, seed, prefix, start=0, length=None):
     resized = g.add("ResizeImageMaskNode", input=frames_in, scale_method="lanczos", **{
         "resize_type": "scale dimensions", "resize_type.width": w, "resize_type.height": h,
         "resize_type.crop": "center"})
+    audio = None if length else [parts, 1]
+    if mode == "clean":
+        _save_video(g, [resized, 0], audio, prefix)
+        return g.nodes
     pre = g.add("SeedVR2Preprocess", resized_images=[resized, 0])
     unet = g.add("UNETLoader", unet_name=SEEDVR2_UNET, weight_dtype="default")
     vae = g.add("VAELoader", vae_name=SEEDVR2_VAE)
     latent = g.add("VAEEncodeTiled", pixels=[pre, 0], vae=[vae, 0], tile_size=512, overlap=128,
                    temporal_size=64, temporal_overlap=8)
-    chunks = g.add("SeedVR2TemporalChunk", latent=[latent, 0], temporal_overlap=0, chunking_mode="auto")
+    overlap = 0 if mode == "seedvr2" else CHUNK_OVERLAP
+    chunks = g.add("SeedVR2TemporalChunk", latent=[latent, 0], temporal_overlap=overlap, chunking_mode="auto")
     cond = g.add("SeedVR2Conditioning", model=[unet, 0], vae_conditioning=[chunks, 0])
     sample = g.add("KSampler", model=[unet, 0], positive=[cond, 0], negative=[cond, 1],
                    latent_image=[chunks, 0], seed=seed, steps=1, cfg=1.0, sampler_name="euler",
@@ -223,7 +239,10 @@ def upscale(video, size, seed, prefix, start=0, length=None):
                     temporal_size=64, temporal_overlap=8)
     post = g.add("SeedVR2PostProcessing", images=[decoded, 0], original_resized_images=[resized, 0],
                  color_correction_method="lab")
-    _save_video(g, [post, 0], None if length else [parts, 1], prefix)
+    out = [post, 0]
+    if mode == "soft":
+        out = [g.add("ImageBlend", image1=[post, 0], image2=[resized, 0], blend_factor=SOFT_MIX, blend_mode="normal"), 0]
+    _save_video(g, out, audio, prefix)
     return g.nodes
 
 
