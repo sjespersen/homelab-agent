@@ -230,9 +230,11 @@ $('projects-btn').onclick = () => { location.hash = ''; };
 window.onhashchange = route;
 async function route() {
   const id = location.hash.slice(1);
-  if (!id) { P = null; $('title').textContent = 'Studio'; document.title = 'Studio'; $('view').innerHTML = ''; return renderHome(); }
+  // The view's cached HTML goes with it, or the projects list wouldn't be drawn again.
+  if (!id) { P = null; $('title').textContent = 'Studio'; document.title = 'Studio'; $('view').innerHTML = ''; $('view')._html = null;
+    $('crumbs').textContent = 'Brief → shot list → stills → previews → review → finals → upscale → export'; return renderHome(); }
   try { P = await api('GET', '/api/projects/' + id); } catch (e) { location.hash = ''; return; }
-  $('view').innerHTML = ''; renderProject(true);
+  $('view').innerHTML = ''; $('view')._html = null; renderProject(true);
 }
 
 // --- Home ----------------------------------------------------------------------------------
