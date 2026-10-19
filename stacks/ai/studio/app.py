@@ -152,13 +152,21 @@ def switcher(method, path, body=None, timeout=30):
         raise RuntimeError(f"switcher: {e}") from None
 
 
+def has_gpu(st, svc):
+    """Whether svc runs and answers. Ollama always runs, so it also needs the others stopped."""
+    if st.get("switching") or svc.get("state") != "running" or svc.get("health") not in (None, "healthy"):
+        return False
+    return not svc.get("always_on") or not any(
+        o["state"] in ("running", "restarting") for o in st.get("services", []) if not o.get("always_on"))
+
+
 def gpu_for(service_id, ready, label):
     """Makes the switcher give the GPU to service_id and waits until ready() says so."""
     st = switcher("GET", "/_ai/api/status")
     svc = next((s for s in st.get("services", []) if s["id"] == service_id), None)
     if svc is None:
         raise RuntimeError(f"{label} isn't in this stack")
-    if not (svc["state"] == "running" and svc.get("health") in (None, "healthy") and not st.get("switching")):
+    if not has_gpu(st, svc):
         switcher("POST", "/_ai/api/switch", {"service": service_id, "force": True})
     deadline = time.time() + 45 * 60  # a first start can download a lot
     while time.time() < deadline:
@@ -168,7 +176,7 @@ def gpu_for(service_id, ready, label):
         svc = next((s for s in st.get("services", []) if s["id"] == service_id), {})
         if st.get("error"):
             raise RuntimeError(st["error"])
-        if not st.get("switching") and svc.get("state") == "running" and svc.get("health") in (None, "healthy") and ready():
+        if has_gpu(st, svc) and ready():
             return
         time.sleep(5)
     raise RuntimeError(f"{label} didn't start")
@@ -178,12 +186,23 @@ def need_swarmui():
     gpu_for("swarmui", comfy.ready, "SwarmUI")
 
 
-def llm_service():
+def llm_models():
+    """The models the shot list can use, as in Open WebUI: the switcher's (Qwen 27B, Strata)
+    and the ones downloaded into Ollama."""
     st = switcher("GET", "/_ai/api/status")
-    for s in st.get("services", []):
-        if LLM_MODEL in s.get("models", []):
-            return s["id"]
-    raise RuntimeError(f"no service serves {LLM_MODEL}")
+    out = [{"id": s["models"][0], "label": s["title"], "service": s["id"], "via": "switcher"}
+           for s in st.get("services", []) if s.get("models") and not s.get("always_on")]
+    ollama = next((s for s in st.get("services", []) if s.get("always_on")), None)
+    if ollama and ollama["state"] == "running":
+        try:
+            tags = switcher("GET", "/ollama/api/tags", timeout=10)
+        except RuntimeError:
+            tags = {}
+        # hf.co/org/Some-Model-GGUF:Q5_K_M -> Some-Model-GGUF:Q5_K_M, as Open WebUI shows it.
+        out += [{"id": m["name"], "label": m["name"].rsplit("/", 1)[-1].removesuffix(":latest"),
+                 "service": ollama["id"], "via": "ollama"}
+                for m in sorted(tags.get("models", []), key=lambda m: m.get("name", "")) if m.get("name")]
+    return out
 
 
 def hold_loop():
@@ -259,18 +278,30 @@ def with_guide(system):
     return out
 
 
-def llm(system, user):
-    gpu_for(llm_service(), lambda: True, LLM_MODEL)
-    body = {"model": LLM_MODEL, "max_tokens": 30000, "temperature": 0.7,
-            "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
-            "reasoning_effort": "medium", "chat_template_kwargs": {"reasoning_effort": "medium"}}
-    req = urllib.request.Request(SWITCHER + "/v1/chat/completions", data=json.dumps(body).encode(), method="POST",
+def llm(system, user, model):
+    found = next((m for m in llm_models() if m["id"] == model), None)
+    if found is None:
+        raise RuntimeError(f"{model} isn't on this box (any more); pick another model")
+    gpu_for(found["service"], lambda: True, model)
+    if found["via"] == "ollama":
+        # Ollama's own API: its OpenAI one can't set the context, and the guide needs ~8K.
+        path = "/ollama/api/chat"
+        body = {"model": model, "stream": False, "options": {"num_ctx": 32768, "temperature": 0.7},
+                "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]}
+    else:
+        path = "/v1/chat/completions"
+        body = {"model": model, "max_tokens": 30000, "temperature": 0.7,
+                "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+                "reasoning_effort": "medium", "chat_template_kwargs": {"reasoning_effort": "medium"}}
+    req = urllib.request.Request(SWITCHER + path, data=json.dumps(body).encode(), method="POST",
                                  headers={"Authorization": "Bearer " + API_KEY, "Content-Type": "application/json"})
     try:
         with urllib.request.urlopen(req, timeout=3 * 3600) as r:
             answer = json.loads(r.read())
     except urllib.error.HTTPError as e:
-        raise RuntimeError(f"{LLM_MODEL}: HTTP {e.code} {e.read()[:300].decode(errors='replace')}") from None
+        raise RuntimeError(f"{model}: HTTP {e.code} {e.read()[:300].decode(errors='replace')}") from None
+    if found["via"] == "ollama":
+        return (answer.get("message") or {}).get("content") or ""
     return answer["choices"][0]["message"].get("content") or ""
 
 
@@ -279,7 +310,8 @@ def write_shots(p, replace):
                       for c in p["characters"]) or "(none: no recurring people)"
     user = (f"Brief:\n{p['brief']}\n\nCharacters (use these exact names):\n{chars}\n\n"
             f"Format: {p['aspect']}. About {p['target_shots']} shots.")
-    text = llm(with_guide(SHOT_PROMPT), user)
+    model = p.get("llm") or LLM_MODEL
+    text = llm(with_guide(SHOT_PROMPT), user, model)
     start, end = text.find("{"), text.rfind("}")
     try:
         shots = json.loads(text[start:end + 1])["shots"]
@@ -297,14 +329,21 @@ def write_shots(p, replace):
         out.append({"id": new_id("s"), "title": str(s.get("title", ""))[:80],
                     "characters": [names[n.lower()] for n in s.get("characters", []) if isinstance(n, str) and n.lower() in names],
                     "seconds": seconds, "still_prompt": str(s.get("still_prompt", "")),
-                    "motion_prompt": str(s.get("motion_prompt", "")), "review": "pending"})
+                    "motion_prompt": fields_only(str(s.get("motion_prompt", ""))), "review": "pending"})
     with lock:
         if replace:
             p["shots"] = out
         else:
             p["shots"].extend(out)
-        log(p, f"{LLM_MODEL} wrote {len(out)} shots")
+        log(p, f"{model} wrote {len(out)} shots")
         save(p)
+
+
+def fields_only(motion):
+    """Drops an instruction line the model wrote anyway (small ones get its times and shot
+    numbers wrong): h3_prompt adds the right one."""
+    at = motion.find("integrated_multimodal_description:")
+    return motion[at:].strip() if at > 0 else motion.strip()
 
 
 def in_h3_format(motion):
@@ -318,7 +357,7 @@ def rewrite_prompt(p, s):
         draft = s["motion_prompt"]
         user = (f"First frame (the still's prompt):\n{s['still_prompt'] or '(none)'}\n\nCharacters in it: {names}\n"
                 f"Length: {s['seconds']} seconds\n\nDraft motion prompt:\n{draft or '(none: invent fitting motion and sound)'}")
-    text = llm(with_guide(REWRITE_PROMPT), user)
+    text = llm(with_guide(REWRITE_PROMPT), user, p.get("llm") or LLM_MODEL)
     at = text.find("integrated_multimodal_description:")
     if at < 0:
         raise RuntimeError("the answer wasn't an H3 prompt: " + text[:300])
@@ -604,6 +643,11 @@ class Handler(BaseHTTPRequestHandler):
                     "running": task and {**task, "since": current["since"]},
                     "queue": queue, "history": history, "missing": missing_models(),
                     "llm": LLM_MODEL, "now": time.time()})
+        if parts == ["api", "models"]:
+            try:
+                return self.json({"models": llm_models(), "default": LLM_MODEL})
+            except RuntimeError as e:
+                return self.json({"error": str(e)}, 502)
         if len(parts) >= 3 and parts[:2] == ["api", "projects"]:
             with lock:
                 p = projects.get(parts[2])
@@ -780,6 +824,8 @@ class Handler(BaseHTTPRequestHandler):
                     p["aspect"] = req["aspect"]
                 if req.get("refine") in wf.REFINE_SIGMAS:
                     p["refine"] = req["refine"]
+                if isinstance(req.get("llm"), str):
+                    p["llm"] = req["llm"].strip()[:200] or None
                 if isinstance(req.get("target_shots"), int):
                     p["target_shots"] = max(1, min(200, req["target_shots"]))
                 save(p)

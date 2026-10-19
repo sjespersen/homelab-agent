@@ -235,7 +235,7 @@ function renderProject(first) {
   $('crumbs').textContent = `${P.shots.length} shots · ${P.characters.length} characters · ${P.aspect}`;
   if (first || !$('shots')) {
     $('view').innerHTML = `<div class="layout"><div class="side">
-      <section class="card"><div class="card-head"><h2>Brief</h2><span class="hint">Qwen writes the shots from this</span></div>
+      <section class="card"><div class="card-head"><h2>Brief</h2><span class="hint">The model below writes the shots from this</span></div>
         <input id="p-title" value="${esc(P.title)}">
         <label>What happens, who, where, the mood (as long as you like)</label>
         <textarea id="p-brief" rows="9" placeholder="A wedding film for Anna and Jonas. Morning: Anna gets ready at her parents' farmhouse...">${esc(P.brief)}</textarea>
@@ -247,7 +247,9 @@ function renderProject(first) {
             <option value="gentle" ${P.refine === 'gentle' ? 'selected' : ''}>Gentle: closer to the preview</option></select></div></div>
         <div class="row" style="margin-top:10px"><button class="primary" id="write">${icon('wand')}Write shot list</button>
           <label style="margin:0;display:flex;gap:5px;align-items:center"><input type="checkbox" id="replace" style="width:auto"> replace the current shots</label></div>
-        <div class="hint" style="margin-top:6px">Uses ${esc(STATE.llm || 'Qwen')} on this box: the GPU switches to it for a few minutes.</div>
+        <div class="row" style="margin-top:10px"><div class="grow"><label>Model for the shot list and rewrites</label>
+          <select id="p-llm"><option>${esc(P.llm || STATE.llm || '')}</option></select></div></div>
+        <div class="hint" style="margin-top:6px">Runs on this box: the GPU switches to it for a few minutes. Download more models in Open WebUI; small ones (8-14B) write weaker H3 prompts.</div>
       </section>
       <section class="card"><div class="card-head"><h2>Characters</h2><button class="small" id="add-char">${icon('plus')}Add</button></div>
         <div class="hint" style="margin-bottom:8px">One clear photo each, showing the outfit, on a plain background (a busy one leaks into the stills). Drop it on the frame.</div>
@@ -258,7 +260,7 @@ function renderProject(first) {
     </div><div>
       <div class="stages" id="stages"></div>
       <div class="toolbar"><div class="seg"><button data-mode="shots">Shots</button><button data-mode="review">Review previews</button></div>
-        <button class="small" id="rewrite-all" title="Qwen rewrites every motion prompt that isn't in H3's format yet, with MiniMax's prompt guide">Rewrite prompts for H3</button>
+        <button class="small" id="rewrite-all" title="The shot-list model rewrites every motion prompt that isn't in H3's format yet, with MiniMax's prompt guide">Rewrite prompts for H3</button>
         <button class="small" id="add-shot">${icon('plus')}Add shot</button></div>
       <div id="shots"></div>
     </div></div>`;
@@ -268,6 +270,8 @@ function renderProject(first) {
     $('p-aspect').onchange = e => save('aspect', e.target.value);
     $('p-refine').onchange = e => save('refine', e.target.value);
     $('p-n').onchange = e => save('target_shots', parseInt(e.target.value) || 12);
+    $('p-llm').onchange = e => save('llm', e.target.value);
+    loadModels();
     $('write').onclick = async () => {
       await save('brief', $('p-brief').value);
       await api('POST', `/api/projects/${P.id}/run`, {kind: 'shots', replace: $('replace').checked}); poll();
@@ -367,6 +371,16 @@ function isRunning(s, kind) {
   return r && r.project === P.id && r.shot === s.id && (!kind || r.kind === kind);
 }
 function isQueued(s, kind) { return (STATE.queue || []).some(t => t.project === P.id && t.shot === s.id && t.kind === kind); }
+// The models the shot list can use (the switcher's and Ollama's, as in Open WebUI).
+async function loadModels() {
+  let d; try { d = await api('GET', '/api/models'); } catch (e) { return; }
+  const sel = $('p-llm'); if (!sel) return;
+  const cur = P.llm || d.default, opt = m => `<option value="${esc(m.id)}" title="${esc(m.id)}" ${m.id === cur ? 'selected' : ''}>${esc(m.label)}</option>`;
+  const box = d.models.filter(m => m.via !== 'ollama'), oll = d.models.filter(m => m.via === 'ollama');
+  sel.innerHTML = (d.models.some(m => m.id === cur) ? '' : `<option value="${esc(cur)}" selected>${esc(cur)} (not on this box)</option>`)
+    + (box.length ? `<optgroup label="This box">${box.map(opt).join('')}</optgroup>` : '')
+    + (oll.length ? `<optgroup label="Ollama (Open WebUI)">${oll.map(opt).join('')}</optgroup>` : '');
+}
 function run(kind, s) { return api('POST', `/api/projects/${P.id}/run`, {kind, shots: [s.id]}).then(poll); }
 function patch(s, body) { return api('POST', `/api/projects/${P.id}/shots/${s.id}`, body).then(d => { P = d; renderProject(false); }); }
 

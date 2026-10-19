@@ -173,13 +173,16 @@ models). SwarmUI fetches text encoders and VAEs itself on first use.
 
 1. **Brief and characters.** Describe the film, and give each recurring person one clear photo
    (showing the outfit, on a plain background: the photo's background leaks into the stills
-   otherwise). **Write shot list** has Qwen (`AI_STUDIO_LLM`) turn it into
+   otherwise). **Write shot list** has a chat model turn it into
    shots: a still prompt (the first frame) and a motion-and-sound prompt per shot. Edit any of
    it, or add shots by hand. Motion prompts follow H3's own format (`integrated_multimodal_description`,
    `overall_soundscape`, `non_diegetic_music`; the Studio adds the first-frame line): Qwen gets
    MiniMax's [H3 prompt-writing guide](https://github.com/MiniMax-AI/MiniMax-H3/tree/main/skills/h3-prompt-writing)
    with the brief. **Rewrite for H3** on a shot (or **Rewrite prompts for H3** for all that
    aren't in the format yet) turns a prompt you wrote in plain words into that format.
+   Each project picks its model under the brief, from the same list as Open WebUI: Qwen3.8-27B,
+   Flash-Next, and whatever you download into Ollama there (`AI_STUDIO_LLM` is the default for
+   new projects). Small Ollama models (8-14B) work but write weaker H3 prompts.
 2. **Stills**: Krea 2 Turbo makes each shot's first frame at the final size. With characters in
    the shot it uses the [Krea 2 Identity Edit V2](https://huggingface.co/conradlocke/krea2-identity-edit)
    LoRA with their photos: one pass per person, each later pass adding the next person to the
@@ -207,7 +210,7 @@ are loaded; switching the GPU between Qwen and SwarmUI adds under a minute):
 So a finished minute of film is roughly 2½ hours of GPU time after you approve the previews.
 
 Jobs run one at a time, grouped by kind so models load less often. The Studio asks the switcher
-for the GPU (Qwen for the shot list and rewrites, SwarmUI for the rest) and holds it while it works:
+for the GPU (the chosen chat model for the shot list and rewrites, SwarmUI for the rest) and holds it while it works:
 switching on the Local AI page is off until the queue is empty or you press Stop.
 
 **Models** (in SwarmUI's `Models` folder; the page lists what's missing). Hugging Face's CDN
