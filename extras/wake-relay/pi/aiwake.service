@@ -5,6 +5,9 @@ After=network.target
 [Service]
 # The MAC of the box's Ethernet port (WAKE_ON_LAN_MAC)
 Environment=AIWAKE_MAC=aa:bb:cc:dd:ee:ff
+# For the Wake page: what answers while the box is awake, and the page to open then
+Environment=AIWAKE_BOX=192.168.1.20:8005
+Environment=AIWAKE_OPEN=http://homelab.local:8005
 ExecStart=/usr/bin/python3 /usr/local/bin/aiwake.py
 Restart=always
 RestartSec=3

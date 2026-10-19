@@ -26,6 +26,31 @@ else
   sed -i -E 's/^allow-interfaces=/#allow-interfaces=/' /etc/avahi/avahi-daemon.conf
 fi
 systemctl restart avahi-daemon
+# After a suspend or a Wi-Fi reconnect Avahi can hear its own announcement, take it for another
+# host and rename itself to <NAME>-2.local. Every minute, set the name back if that happened.
+cat >/etc/systemd/system/mdns-name.service <<'EOF'
+[Unit]
+Description=Give Avahi its host name back after a false name conflict
+After=avahi-daemon.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c 'h=$$(hostname -s); busctl call org.freedesktop.Avahi / org.freedesktop.Avahi.Server GetHostName | grep -qx "s \\"$$h\\"" || busctl call org.freedesktop.Avahi / org.freedesktop.Avahi.Server SetHostName s "$$h"'
+EOF
+cat >/etc/systemd/system/mdns-name.timer <<'EOF'
+[Unit]
+Description=Check every minute that Avahi still uses the host name
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+AccuracySec=10s
+
+[Install]
+WantedBy=timers.target
+EOF
+systemctl daemon-reload
+systemctl enable --now mdns-name.timer
 
 log "Boot: wait for any network port, not all"
 # netplan makes the boot wait until every configured port has a link, up to 2 minutes: with

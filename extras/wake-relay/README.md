@@ -15,14 +15,17 @@ addresses or DHCP.
 
 `pi/` holds what runs on it: `aiwake.py` + `aiwake.service`, a small HTTP service on port 80.
 `POST /api/wake` sends the magic packet; `GET /api/state` reports the cable's link (`up` while
-the box's port has power, which it keeps during suspend when Wake-on-LAN is on).
+the box's port has power, which it keeps during suspend when Wake-on-LAN is on) and whether the
+box answers. `http://aiwake.local/` is a page with a Wake button: bookmark it instead of the
+box's page, and it opens that page (`AIWAKE_OPEN`) as soon as the box answers on `AIWAKE_BOX`
+(use its IP; the Pi may not resolve `.local` names).
 
 Set it up:
 
 1. Flash Raspberry Pi OS Lite (64-bit) with Raspberry Pi Imager: hostname (e.g. `aiwake`), your
    Wi-Fi and your SSH key.
 2. Copy `aiwake.py` to `/usr/local/bin/` and `aiwake.service` to `/etc/systemd/system/`, set
-   `AIWAKE_MAC` in it to the MAC of the box's Ethernet port, then
+   `AIWAKE_MAC` in it to the MAC of the box's Ethernet port (and `AIWAKE_BOX`/`AIWAKE_OPEN`), then
    `systemctl enable --now aiwake`. On a fresh card you can do that from `user-data`
    (cloud-init `write_files` + `runcmd`).
 3. Plug the USB-Ethernet adapter into the Pi's **USB** port (the middle one, with a micro-USB OTG
