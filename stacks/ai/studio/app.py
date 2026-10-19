@@ -246,6 +246,7 @@ Answer with JSON only, no other text:
 - An outfit's look: each garment with colour and material, shoes, hair, jewellery, and what is NOT worn (the model copies clothes from the reference photo otherwise: "no jacket, bare arms"). A character keeps an outfit until the brief changes it.
 - cast: everyone recurring in the shot. position: where they are in the frame ("on the left", "on the right", "in the centre", "in the background"), different for each person in the shot.
 - still_prompt: only what this shot adds: the framing, how much of each person is visible ("full body", "waist up", "close-up of her hands"), the camera angle, poses, actions, expressions, which part of the place is seen, and the light by where it lands ("warm window light across her left cheek"). Refer to people by name. Don't repeat the place's or the outfits' looks.
+- motion_prompt: one string holding the three H3 fields described below.
 - Keep the story continuous: what a shot shows (props, state of things, positions) follows from the shot before unless there's a cut in time.
 - Vary the framing (wide, medium, close-up); keep motion simple and physical; no on-screen text unless asked.
 """
@@ -328,6 +329,8 @@ def write_shots(p, replace):
                  + json.dumps(looks_for_llm(p), ensure_ascii=False))
     model = p.get("llm") or LLM_MODEL
     text = llm(with_guide(SHOT_PROMPT), user, model)
+    with open(os.path.join(DATA, "last-shot-list.txt"), "w", encoding="utf-8") as f:
+        f.write(text)  # for when an answer doesn't parse as expected
     start, end = text.find("{"), text.rfind("}")
     try:
         answer = json.loads(text[start:end + 1])
@@ -376,7 +379,7 @@ def write_shots(p, replace):
                     "characters": list(cast), "cast": cast,
                     "place": place_ids.get(str(s.get("place", "")).strip().lower()),
                     "seconds": seconds, "still_prompt": str(s.get("still_prompt", "")),
-                    "motion_prompt": fields_only(str(s.get("motion_prompt", ""))), "review": "pending"})
+                    "motion_prompt": fields_only(motion_of(s)), "review": "pending"})
     with lock:
         if replace:
             p["shots"] = out
@@ -384,6 +387,20 @@ def write_shots(p, replace):
             p["shots"].extend(out)
         log(p, f"{model} wrote {len(out)} shots")
         save(p)
+
+
+H3_FIELDS = ("integrated_multimodal_description", "overall_soundscape", "non_diegetic_music")
+
+
+def motion_of(s):
+    """The shot's motion prompt as one string, also when the model wrote H3's fields as an
+    object or as keys of the shot."""
+    m = s.get("motion_prompt")
+    if isinstance(m, str) and m.strip():
+        return m
+    src = m if isinstance(m, dict) else s
+    parts = [f"{k}: {src[k]}" for k in H3_FIELDS if isinstance(src.get(k), str) and src[k].strip()]
+    return "\n\n".join(parts)
 
 
 def looks_for_llm(p):
@@ -441,11 +458,13 @@ def still_prompts(p, s):
             break
         it = "The person from the photo" + (f" is {pos}" if pos and len(cast) > 1 else "") if c is first[0] \
             else f"Another person is {pos}" if pos else "Another person is in the shot"
-        who.append(it + (f" and wears {look}" if look and c is not first[0] else f", wearing {look}" if look else "") + ".")
+        # The model copies the photo's clothes unless told they're gone (its model card says so).
+        who.append(it + (f" and wears {look}" if look and c is not first[0]
+                         else f", wearing {look}. Not the clothes from the photo" if look else "") + ".")
     passes = [scene + ("\n\n" + " ".join(who) if who else "") + setting]
     for c, pos, look in cast[1:]:
         passes.append(f"Replace {label(c, pos)} in the first image with the person from the second image, "
-                      f"in the same pose, place and framing" + (f", wearing {look}" if look else "")
+                      f"in the same pose, place and framing" + (f", wearing {look}. Not the clothes from the second image" if look else "")
                       + ". Keep everything else in the first image exactly as it is.")
     return passes
 
