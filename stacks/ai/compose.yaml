@@ -390,7 +390,63 @@ services:
       - /run
     restart: unless-stopped
 
+  # Logs: VictoriaLogs keeps the containers' logs and the Studio's API log for 30 days (10 GB at
+  # most) on the media disk, not backed up, with a search page (port 8009 / logs.<DOMAIN>, behind
+  # the switcher's login: site.logs.caddy). Vector collects them (logs/vector.yaml).
+  logs:
+    image: victoriametrics/victoria-logs:latest@sha256:251121fa882af99b95ba0c230a4a2f412ea602d2698c64a96c58dc9842bb755d  # v1.53.0
+    container_name: ai-logs
+    user: "${PUID}:${PGID}"
+    command:
+      - -storageDataPath=/data
+      - -retentionPeriod=30d
+      - -retention.maxDiskSpaceUsageBytes=10GiB
+      - -insert.maxLineSizeBytes=16MiB   # a Studio request carries the whole H3 guide
+    ports:
+      - "127.0.0.1:9428:9428"
+    volumes:
+      - ${AI_MEDIA_DIR}/logs/victoria:/data
+    read_only: true
+    cap_drop: [ALL]
+    restart: unless-stopped
+
+  log-shipper:
+    image: timberio/vector:latest-alpine@sha256:faee4b4576b4c0f68e65793e6cd4bb93ff3db63a2b3a9489339f366436c72aa4  # 0.60.0
+    container_name: ai-log-shipper
+    user: "${PUID}:${PGID}"
+    command: ["--config", "/etc/vector/vector.yaml"]
+    volumes:
+      - ./logs/vector.yaml:/etc/vector/vector.yaml:ro
+      - ${AI_MEDIA_DIR}/logs/vector:/var/lib/vector   # how far it has read
+      - ${AI_MEDIA_DIR}/studio/logs:/studio-logs:ro
+    networks: [default, logs-api]
+    read_only: true
+    cap_drop: [ALL]
+    depends_on: [logs]
+    restart: unless-stopped
+
+  # Like Beszel's: only reads (container list, inspect, logs, events). Its own internal network,
+  # so the switcher's proxy (which can start and stop) stays out of Vector's reach.
+  logs-socket-proxy:
+    image: lscr.io/linuxserver/socket-proxy:latest@sha256:e5d819de59b343c01b2fe7adc7fad3c7a60e5dba08e45f1ac317352bc08599b5  # 3.4.7-r0-ls103
+    container_name: ai-logs-socket-proxy
+    environment:
+      CONTAINERS: "1"
+      ALLOW_LOGS: "1"   # since 3.4.7, /containers/<id>/logs needs its own switch
+      EVENTS: "1"
+      POST: "0"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [logs-api]
+    read_only: true
+    tmpfs:
+      - /run
+    restart: unless-stopped
+
 networks:
   # No way out and nothing published: only the switcher reaches the proxy.
   docker-api:
+    internal: true
+  # The same for the logs' proxy: only Vector.
+  logs-api:
     internal: true

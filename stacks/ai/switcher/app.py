@@ -1114,6 +1114,7 @@ const ICONS = {
   flow: '<rect x="3" y="4" width="6" height="6" rx="1.5"/><rect x="15" y="14" width="6" height="6" rx="1.5"/><path d="M9 7h3a3 3 0 0 1 3 3v4"/>',
   agent: '<rect x="4" y="7" width="16" height="12" rx="3"/><path d="M12 3v4M9 12v1.5M15 12v1.5M9.5 16h5"/>',
   film: '<rect x="3" y="6" width="12" height="12" rx="2"/><path d="M15 10.5l6-3.5v10l-6-3.5"/>',
+  logs: '<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/>',
   grid: '<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/>',
 };
 // The services' look, by module (and site, for the ai module's own sites).
@@ -1121,6 +1122,7 @@ const SERVICE_LOOK = {
   'ai/swarm': ['image', 'var(--image)'], 'ai/chat': ['chat', 'var(--web)'],
   'uptime-kuma': ['pulse', 'var(--accent)'], 'beszel': ['bars', 'var(--orange)'], 'pihole': ['shield', 'var(--red)'],
   'n8n': ['flow', 'var(--pink)'], 'hermes': ['agent', 'var(--teal)'], 'ai/studio': ['film', 'var(--image)'],
+  'ai/logs': ['logs', 'var(--teal)'],
 };
 const icon = n => `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">${ICONS[n]}</svg>`;
 let LINKS = [];

@@ -314,6 +314,11 @@ curl http://<name>.local:8005/v1/chat/completions -H "Authorization: Bearer $key
 - The Studio's API log: every request to the chat models and ComfyUI with what came back
   (pictures as their size), in `AI_MEDIA_DIR/studio/logs/api.jsonl`, rotated at 10 MB with 5
   old files kept. Not backed up. `tail -f /srv/media/studio/logs/api.jsonl | jq`
+- Logs (port 8009 / `logs.<DOMAIN>`, the switcher's login): VictoriaLogs with every container's
+  log and the Studio's API log, searchable for 30 days (10 GB at most), in `AI_MEDIA_DIR/logs/`.
+  Vector collects them (`logs/vector.yaml`). In the search page, `source:studio` shows the
+  Studio's calls (the whole request and response in their `request` and `response` fields),
+  `container_name:ai-switcher` one container. Opening port 8009 on the LAN takes a setup run.
 
 ## Updates
 

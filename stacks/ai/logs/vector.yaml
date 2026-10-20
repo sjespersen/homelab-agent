@@ -1,0 +1,71 @@
+# Vector: collects the containers' logs (through the read-only Docker proxy) and the Studio's API
+# log, and sends them to VictoriaLogs. The search page groups them by `source` and
+# `container_name`; a Studio entry's `request` and `response` hold the whole JSON.
+data_dir: /var/lib/vector
+
+sources:
+  containers:
+    type: docker_logs
+    docker_host: http://logs-socket-proxy:2375
+    exclude_containers: [ai-log-shipper]
+  studio_api:
+    type: file
+    include: [/studio-logs/api.jsonl*]   # with the rotated files, so lines written just before a rotation still arrive
+    read_from: beginning
+    max_line_bytes: 16777216
+
+transforms:
+  docker:
+    type: remap
+    inputs: [containers]
+    source: |
+      del(.label)
+      .source = "docker"
+
+  studio:
+    type: remap
+    inputs: [studio_api]
+    drop_on_abort: true
+    source: |
+      e, err = parse_json(.message)
+      if err != null || !is_object(e) { abort }
+      e = object!(e)
+      ts, err = parse_timestamp(e.at, "%Y-%m-%d %H:%M:%S %z")
+      if err != null { ts = now() }
+      out = {"timestamp": ts, "source": "studio", "container_name": "ai-studio", "kind": e.kind,
+             "seconds": e.seconds, "error": e.error, "status": e.status}
+      summary = ""
+      if e.kind == "llm" {
+        out.model = e.request.model
+        out.request = encode_json(e.request)
+        out.response = encode_json(e.response)
+        summary = "LLM " + (to_string(e.request.model) ?? "?") + " · " + (to_string(e.seconds) ?? "?") + " s"
+        tokens = e.response.usage   # Ollama's own API: prompt_eval_count and eval_count
+        if is_object(tokens) {
+          summary = summary + " · " + (to_string(tokens.prompt_tokens) ?? "?") + " → " + (to_string(tokens.completion_tokens) ?? "?") + " tokens"
+        } else if e.response.eval_count != null {
+          summary = summary + " · " + (to_string(e.response.prompt_eval_count) ?? "?") + " → " + (to_string(e.response.eval_count) ?? "?") + " tokens"
+        }
+      } else {
+        out.request = encode_json(e.graph)
+        out.response = encode_json(e.outputs)
+        nodes = length(object(e.graph) ?? {})
+        summary = "ComfyUI · " + to_string(nodes) + " nodes · " + (to_string(e.seconds) ?? "?") + " s"
+      }
+      if e.error != null { summary = summary + " · ERROR " + (to_string(e.error) ?? "") }
+      out.message = summary
+      . = out
+
+sinks:
+  victorialogs:
+    type: elasticsearch
+    inputs: [docker, studio]
+    endpoints: [http://logs:9428/insert/elasticsearch/]
+    api_version: v8
+    compression: gzip
+    healthcheck:
+      enabled: false
+    query:
+      _msg_field: message
+      _time_field: timestamp
+      _stream_fields: source,container_name

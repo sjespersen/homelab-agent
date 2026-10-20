@@ -1,0 +1,14 @@
+# VictoriaLogs has no login of its own: the switcher's login (the AI API key) guards it.
+handle /_ai/* {
+	reverse_proxy 127.0.0.1:8079
+}
+handle {
+	forward_auth 127.0.0.1:8079 {
+		uri /_ai/auth
+	}
+	redir / /select/vmui/
+	reverse_proxy 127.0.0.1:9428
+}
+handle_errors 502 {
+	respond "VictoriaLogs isn't running: ./deploy.sh on your computer." 502
+}
