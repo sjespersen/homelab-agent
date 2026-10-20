@@ -19,6 +19,31 @@ apt-get update -q
 apt-get install -y -q docker.io docker-compose-v2 avahi-daemon libnss-mdns restic rsync ufw curl
 usermod -aG docker "$SERVER_USER"
 
+log "Docker: container logs"
+# Docker keeps every container's log forever by default. 3 files of 10 MB per container; the
+# ai module's logs page keeps 30 days of them anyway. Merged into daemon.json (NVIDIA's runtime
+# lives there too). Only containers created after this get it: existing ones keep theirs until
+# they're recreated (a new image, a config change, or `docker compose up -d --force-recreate`).
+if python3 - <<'EOF'
+import json, sys
+path = "/etc/docker/daemon.json"
+try:
+    with open(path) as f:
+        cfg = json.load(f)
+except FileNotFoundError:
+    cfg = {}
+want = {"log-driver": "json-file", "log-opts": {"max-size": "10m", "max-file": "3"}}
+if all(cfg.get(k) == v for k, v in want.items()):
+    sys.exit(1)
+cfg.update(want)
+with open(path, "w") as f:
+    json.dump(cfg, f, indent=4)
+    f.write("\n")
+EOF
+then
+  systemctl restart docker
+fi
+
 log "mDNS: ${MDNS_INTERFACES:-all interfaces}"
 if [[ -n ${MDNS_INTERFACES:-} ]]; then
   sed -i -E "s/^#?allow-interfaces=.*/allow-interfaces=${MDNS_INTERFACES// /,}/" /etc/avahi/avahi-daemon.conf
