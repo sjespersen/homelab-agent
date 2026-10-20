@@ -1,3 +1,2 @@
-# The web chat (Open WebUI) and SwarmUI's generated images stay out of the backups on purpose.
+# The web chat (Open WebUI) stays out of the backups on purpose (images are on the media disk).
 /opt/stacks/ai/data/webchat
-/opt/stacks/ai/data/swarm/Output

@@ -299,14 +299,16 @@ curl http://<name>.local:8005/v1/chat/completions -H "Authorization: Bearer $key
 ## Files
 
 - `/opt/stacks/ai/data/`: the API key, the switcher's choice, SwarmUI's settings and workflows.
-  In the backups, except the generated images (`swarm/Output`) and the web chat (`webchat`),
-  which stay out of them on purpose (`backup-excludes.txt`); copy images you want to keep.
+  In the backups, except the web chat (`webchat`), which stays out of them on purpose
+  (`backup-excludes.txt`).
 - `AI_MODELS_DIR`: `llama.cpp/`, `strata/`, and `swarm/` (image models, ComfyUI, extensions).
   Not backed up; models download again. Keep copies of models you made or changed yourself elsewhere.
-- `AI_MEDIA_DIR` (`/srv/media`): a disk for media, with `AI_MEDIA_DEVICE` mounted like the models
-  disk. Not backed up. The Local AI page shows how full the models, system and media disks are.
+- `AI_MEDIA_DIR` (`/srv/media`): the generated media, on its own disk with `AI_MEDIA_DEVICE`
+  (mounted like the models disk): SwarmUI's images (`swarm/Output/`), ComfyUI's uploads and
+  renders (`comfyui/input/`, `comfyui/output/`) and the Studio's renders (`studio/`). Not backed
+  up: copy what you keep. The Local AI page shows how full the models, system and media disks are.
 - The Studio: projects (briefs, shot lists, photos, the picture) in `data/studio/` (backed up),
-  renders in `AI_MODELS_DIR/studio/` (not backed up: export what you keep). ComfyUI keeps a copy
+  renders in `AI_MEDIA_DIR/studio/` (not backed up: export what you keep). ComfyUI keeps a copy
   of every upload and render; the Studio deletes them after each job. Deleting a shot or a
   project deletes its renders and photos too.
 

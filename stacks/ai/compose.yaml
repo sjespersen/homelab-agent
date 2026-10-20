@@ -192,16 +192,19 @@ services:
     ports:
       - "127.0.0.1:7801:7801"
     volumes:
-      # Settings and workflows: in /opt/stacks, so they're backed up. The generated images live
-      # here too but stay out of the backups (backup-excludes.txt).
+      # Settings and workflows: in /opt/stacks, so they're backed up. The generated images on the
+      # media disk, not backed up.
       - ./data/swarm/Data:/SwarmUI/Data
-      - ./data/swarm/Output:/SwarmUI/Output
+      - ${AI_MEDIA_DIR}/swarm/Output:/SwarmUI/Output
       - ./data/swarm/CustomWorkflows:/SwarmUI/src/BuiltinExtensions/ComfyUIBackend/CustomWorkflows
       # Models, ComfyUI and extensions: big and downloadable again, on the models disk.
       - ${AI_MODELS_DIR}/swarm/Models:/SwarmUI/Models
       - ${AI_MODELS_DIR}/swarm/dlbackend:/SwarmUI/dlbackend
       - ${AI_MODELS_DIR}/swarm/DLNodes:/SwarmUI/src/BuiltinExtensions/ComfyUIBackend/DLNodes
       - ${AI_MODELS_DIR}/swarm/Extensions:/SwarmUI/src/Extensions
+      # ComfyUI's uploads and renders: on the media disk (the Studio mounts them the same way).
+      - ${AI_MEDIA_DIR}/comfyui/input:/SwarmUI/dlbackend/ComfyUI/input
+      - ${AI_MEDIA_DIR}/comfyui/output:/SwarmUI/dlbackend/ComfyUI/output
     shm_size: "4gb"
     healthcheck:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:7801/"]   # not --spider: HEAD gets 405
@@ -337,7 +340,7 @@ services:
 
   # The Studio: brief -> shot list (Qwen) -> stills (Krea 2) -> previews and finals (MiniMax H3)
   # -> upscale (SeedVR2) -> export for Resolve, on SwarmUI's ComfyUI. No GPU of its own: it asks
-  # the switcher for it. Projects in data/studio (backed up), renders on the models disk.
+  # the switcher for it. Projects in data/studio (backed up), renders on the media disk.
   studio:
     image: python:3.13-slim@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f  # 3.13.16
     container_name: ai-studio
@@ -357,11 +360,13 @@ services:
     volumes:
       - ./studio:/app:ro
       - ./data/studio:/data
-      - ${AI_MODELS_DIR}/studio:/media
+      - ${AI_MEDIA_DIR}/studio:/media
       - ${AI_MODELS_DIR}/swarm/Models:/models:ro   # only to see which models are there
       # ComfyUI keeps a copy of every upload (input/) and render (output/studio/): the Studio
       # deletes them once it has its own, and with a deleted project or shot.
       - ${AI_MODELS_DIR}/swarm/dlbackend:/comfy
+      - ${AI_MEDIA_DIR}/comfyui/input:/comfy/ComfyUI/input
+      - ${AI_MEDIA_DIR}/comfyui/output:/comfy/ComfyUI/output
     read_only: true
     cap_drop: [ALL]
     restart: unless-stopped

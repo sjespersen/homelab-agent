@@ -17,12 +17,14 @@ fi
 # Docker would create missing bind-mount folders as root; the containers run as you.
 models=$(sed -n 's/^AI_MODELS_DIR="\(.*\)"$/\1/p' .env)
 media=$(sed -n 's/^AI_MEDIA_DIR="\(.*\)"$/\1/p' .env)
-[[ -d $media ]] || mkdir -p "$media" || {
-  echo "Can't create $media: run bootstrap.sh (./setup.sh) first, it prepares $media." >&2
-  exit 1
-}
-mkdir -p data/switcher data/swarm/{Data,Output,CustomWorkflows} data/webchat data/studio
-for sub in llama.cpp strata ollama studio swarm/Models swarm/dlbackend swarm/DLNodes swarm/Extensions; do
+for sub in studio swarm/Output comfyui/input comfyui/output; do
+  [[ -d $media/$sub ]] || mkdir -p "$media/$sub" || {
+    echo "Can't create $media/$sub: run bootstrap.sh (./setup.sh) first, it prepares $media." >&2
+    exit 1
+  }
+done
+mkdir -p data/switcher data/swarm/{Data,CustomWorkflows} data/webchat data/studio
+for sub in llama.cpp strata ollama swarm/Models swarm/dlbackend swarm/DLNodes swarm/Extensions; do
   [[ -d $models/$sub ]] || mkdir -p "$models/$sub" || {
     echo "Can't create $models/$sub: run bootstrap.sh (./setup.sh) first, it prepares $models." >&2
     exit 1

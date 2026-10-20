@@ -263,7 +263,7 @@ single-maintainer project built from a git tag on the box and run as root in its
 with page-locked memory: a tag that gets moved, or a bad release, runs on your GPU box.
 SwarmUI is built the same way, and installs ComfyUI and Python packages at runtime, unpinned;
 every ComfyUI custom node or SwarmUI extension you add runs code with access to its container
-(your images and the models disk). The Studio adds two community node packs
+(your images, the models and media disks). The Studio adds two community node packs
 (`stacks/ai/studio/comfy-nodes.txt`): pinned to a commit, read before pinning (no network
 calls, subprocesses or installs at runtime), put in place by `before-up.sh`. It also fetches
 MiniMax's H3 prompt guide, a text file that goes into Qwen's prompt: pinned to a commit and
