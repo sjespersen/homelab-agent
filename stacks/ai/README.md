@@ -303,6 +303,8 @@ curl http://<name>.local:8005/v1/chat/completions -H "Authorization: Bearer $key
   which stay out of them on purpose (`backup-excludes.txt`); copy images you want to keep.
 - `AI_MODELS_DIR`: `llama.cpp/`, `strata/`, and `swarm/` (image models, ComfyUI, extensions).
   Not backed up; models download again. Keep copies of models you made or changed yourself elsewhere.
+- `AI_MEDIA_DIR` (`/srv/media`): a disk for media, with `AI_MEDIA_DEVICE` mounted like the models
+  disk. Not backed up. The Local AI page shows how full the models, system and media disks are.
 - The Studio: projects (briefs, shot lists, photos, the picture) in `data/studio/` (backed up),
   renders in `AI_MODELS_DIR/studio/` (not backed up: export what you keep). ComfyUI keeps a copy
   of every upload and render; the Studio deletes them after each job. Deleting a shot or a

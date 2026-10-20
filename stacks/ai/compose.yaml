@@ -320,6 +320,8 @@ services:
       - ./data/switcher:/state
       # Read-only, to drop a stopped service's model files from the page cache (drop_cache).
       - ${AI_MODELS_DIR}:/models:ro
+      # Read-only, for the page's disk fill levels.
+      - ${AI_MEDIA_DIR}:/media:ro
       - ../caddy/site:/site:ro
     networks: [default, docker-api]
     read_only: true

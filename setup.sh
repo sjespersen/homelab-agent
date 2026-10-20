@@ -158,6 +158,8 @@ if has_module ai; then
   note "Partitions on the server (lsblk):"
   on_server "lsblk -o NAME,SIZE,FSTYPE,MOUNTPOINTS" | sed 's/^/     /'
   ask AI_MODELS_DEVICE "Partition to mount there, e.g. /dev/nvme0n1p1 (empty: leave as is; never formatted)" "${AI_MODELS_DEVICE:-}"
+  ask AI_MEDIA_DIR "Folder for Studio and ComfyUI media" "${AI_MEDIA_DIR:-/srv/media}"
+  ask AI_MEDIA_DEVICE "Partition to mount there (empty: leave as is; never formatted)" "${AI_MEDIA_DEVICE:-}"
 fi
 
 # Everything else is detected or has a sensible default; the config file is yours to edit.
@@ -186,6 +188,8 @@ WAKE_RELAY_VIA=${WAKE_RELAY_VIA:-}
 AI_MODEL=${AI_MODEL:-qwen27b}
 AI_MODELS_DIR=${AI_MODELS_DIR:-/srv/models}
 AI_MODELS_DEVICE=${AI_MODELS_DEVICE:-}
+AI_MEDIA_DIR=${AI_MEDIA_DIR:-/srv/media}
+AI_MEDIA_DEVICE=${AI_MEDIA_DEVICE:-}
 AI_CONTEXT=${AI_CONTEXT:-32768}
 AI_STRATA_CONTEXT=${AI_STRATA_CONTEXT:-131072}
 AI_STRATA_KV_STREAMING=${AI_STRATA_KV_STREAMING:-auto}

@@ -43,6 +43,7 @@ POWER_ACTIONS = ("suspend", "reboot", "poweroff")
 # (STATE says "none" after Stop or an idle stop).
 LAST_CHAT_FILE = os.path.join(os.path.dirname(STATE), "last-chat")
 MODELS_DIR = os.environ.get("MODELS_DIR", "/models")   # AI_MODELS_DIR, read-only
+MEDIA_DIR = os.environ.get("MEDIA_DIR", "/media")      # AI_MEDIA_DIR, read-only
 # The page is also the box's landing page (port 80): its name, and the other services' links.
 NAME = os.environ.get("NAME", "")
 LINKS_FILE = os.environ.get("LINKS_FILE", "/site/links.json")
@@ -199,13 +200,18 @@ def ram():
 
 
 def disks():
-    """Fill level in MiB of the models disk and the system disk (the container's / is the host's root fs)."""
-    out = []
-    for name, path in (("Models", MODELS_DIR), ("System", "/")):
+    """Fill level in MiB of the models, system and media disks. The system disk is read through the
+    state folder, a bind mount like the others (the container's own / is an overlay with another
+    fsid); a media folder that isn't its own disk counts as part of that disk."""
+    out, seen = [], set()
+    for name, path in (("Models", MODELS_DIR), ("System", os.path.dirname(STATE)), ("Media", MEDIA_DIR)):
         try:
             st = os.statvfs(path)
         except OSError:
             continue
+        if st.f_fsid in seen:
+            continue
+        seen.add(st.f_fsid)
         # Like df: blocks reserved for root count as neither used nor free.
         mib = lambda blocks: blocks * st.f_frsize // 2**20
         out.append({"name": name, "total": mib(st.f_blocks), "used": mib(st.f_blocks - st.f_bfree),

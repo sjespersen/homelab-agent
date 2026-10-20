@@ -1,5 +1,5 @@
 # Run by bootstrap.sh as root when the ai module is enabled: the NVIDIA driver, GPU access for
-# containers, BuildKit (Strata is built on the box), and the disk for the models.
+# containers, BuildKit (Strata is built on the box), and the disks for the models and media.
 models=${AI_MODELS_DIR:-/srv/models}
 
 apt-get install -y -q ubuntu-drivers-common docker-buildx gnupg
@@ -72,30 +72,36 @@ elif [[ -f /etc/systemd/system/homelab-leds.path ]]; then
   systemctl daemon-reload
 fi
 
-# AI_MODELS_DEVICE: mount that partition at AI_MODELS_DIR at every boot (by UUID; nofail, so a
-# missing disk doesn't stop the boot). Formatting is up to you; this never erases anything.
-if [[ -n ${AI_MODELS_DEVICE:-} ]]; then
-  uuid=$(blkid -s UUID -o value "$AI_MODELS_DEVICE" || true)
-  fstype=$(blkid -s TYPE -o value "$AI_MODELS_DEVICE" || true)
-  if [[ -z $uuid || -z $fstype ]]; then
-    echo "$AI_MODELS_DEVICE has no filesystem yet. Check it's the right disk (lsblk), then" >&2
-    echo "format it (erases it): sudo mkfs.ext4 -L models $AI_MODELS_DEVICE" >&2
-    exit 1
+# AI_MODELS_DEVICE / AI_MEDIA_DEVICE: mount that partition at AI_MODELS_DIR / AI_MEDIA_DIR at
+# every boot (by UUID; nofail, so a missing disk doesn't stop the boot). Formatting is up to you;
+# this never erases anything.
+mount_disk() {
+  local device=$1 dir=$2 what=$3 uuid fstype mounted_at
+  if [[ -n $device ]]; then
+    uuid=$(blkid -s UUID -o value "$device" || true)
+    fstype=$(blkid -s TYPE -o value "$device" || true)
+    if [[ -z $uuid || -z $fstype ]]; then
+      echo "$device has no filesystem yet. Check it's the right disk (lsblk), then" >&2
+      echo "format it (erases it): sudo mkfs.ext4 -L $what $device" >&2
+      exit 1
+    fi
+    mounted_at=$(findmnt -nro TARGET -S "UUID=$uuid" 2>/dev/null | head -1 || true)
+    if [[ -n $mounted_at && $mounted_at != "$dir" ]]; then
+      echo "$device is already mounted at $mounted_at; not touching it." >&2
+      exit 1
+    fi
+    mkdir -p "$dir"
+    sed -i "\\|^[^#][^[:space:]]*[[:space:]]\\+${dir}[[:space:]]|d" /etc/fstab
+    printf 'UUID=%s %s %s defaults,noatime,nofail 0 2\n' "$uuid" "$dir" "$fstype" >>/etc/fstab
+    systemctl daemon-reload
+    mountpoint -q "$dir" || mount "$dir"
   fi
-  mounted_at=$(findmnt -nro TARGET -S "UUID=$uuid" 2>/dev/null | head -1 || true)
-  if [[ -n $mounted_at && $mounted_at != "$models" ]]; then
-    echo "$AI_MODELS_DEVICE is already mounted at $mounted_at; not touching it." >&2
-    exit 1
+  mkdir -p "$dir"
+  if ! mountpoint -q "$dir"; then
+    echo "Note: $dir is on the system disk. Set AI_${what^^}_DEVICE to keep the $what on their own disk."
   fi
-  mkdir -p "$models"
-  sed -i "\\|^[^#][^[:space:]]*[[:space:]]\\+${models}[[:space:]]|d" /etc/fstab
-  printf 'UUID=%s %s %s defaults,noatime,nofail 0 2\n' "$uuid" "$models" "$fstype" >>/etc/fstab
-  systemctl daemon-reload
-  mountpoint -q "$models" || mount "$models"
-fi
-mkdir -p "$models"
-if ! mountpoint -q "$models"; then
-  echo "Note: $models is on the system disk. Set AI_MODELS_DEVICE to keep the models on their own disk."
-fi
-chown "$SERVER_USER:$SERVER_USER" "$models"
-df -h "$models" | sed -n 2p
+  chown "$SERVER_USER:$SERVER_USER" "$dir"
+  df -h "$dir" | sed -n 2p
+}
+mount_disk "${AI_MODELS_DEVICE:-}" "$models" models
+mount_disk "${AI_MEDIA_DEVICE:-}" "${AI_MEDIA_DIR:-/srv/media}" media
