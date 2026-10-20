@@ -16,9 +16,9 @@ addresses or DHCP.
 `pi/` holds what runs on it: `aiwake.py` + `aiwake.service`, a small HTTP service on port 80.
 `POST /api/wake` sends the magic packet; `GET /api/state` reports the cable's link (`up` while
 the box's port has power, which it keeps during suspend when Wake-on-LAN is on) and whether the
-box answers. `http://aiwake.local/` is a page with a Wake button: bookmark it instead of the
-box's page, and it opens that page (`AIWAKE_OPEN`) as soon as the box answers on `AIWAKE_BOX`
-(use its IP; the Pi may not resolve `.local` names).
+box answers. `http://aiwake.local/` is a page with a Wake button. It shows whether the box answers
+on `AIWAKE_BOX` (use its IP; the Pi may not resolve `.local` names) and, while it's awake, links
+the box's page (`AIWAKE_OPEN`); it doesn't leave the page, so you can keep it open in a tab.
 
 Set it up:
 

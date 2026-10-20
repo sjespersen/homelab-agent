@@ -4,13 +4,13 @@
 The Pi has a USB-Ethernet adapter cabled straight to the box's Ethernet port, so the
 magic packet reaches the box while the box itself uses Wi-Fi. It goes out as a raw
 Ethernet frame (EtherType 0x0842), so the link needs no IP addresses.
-  GET  /           a page with a Wake button; opens the box's page once it answers
+  GET  /           a page with a Wake button; links the box's page once it answers
   POST /api/wake   send the magic packet
   GET  /api/state  link state of the cable (up when the box's port has power) and, with
                    AIWAKE_BOX, whether the box answers
 Settings come from the environment (aiwake.service): AIWAKE_MAC, AIWAKE_IFACE, AIWAKE_PORT,
 AIWAKE_BOX (host:port that answers while the box is awake, e.g. 192.168.0.141:8005) and
-AIWAKE_OPEN (the page the Wake page opens then, e.g. http://aibox.local:8005).
+AIWAKE_OPEN (the page the Wake page links then, e.g. http://aibox.local:8005).
 """
 import glob
 import json
@@ -89,13 +89,14 @@ async function check() {
     const s = await (await fetch("/api/state", {cache: "no-store"})).json();
     if (s.box === "awake") {
       document.getElementById("title").textContent = "The box is awake";
-      btn.hidden = true;
-      if (OPEN) { status.innerHTML = 'Opening <a href="' + OPEN + '">' + OPEN + '</a>…'; location.href = OPEN; }
+      btn.hidden = true; btn.disabled = false; waking = false;
+      if (OPEN) status.innerHTML = '<a href="' + OPEN + '">' + OPEN + '</a>';
       else status.textContent = "";
-      return;
+    } else {
+      document.getElementById("title").textContent = s.box === "asleep" ? "The box is asleep" : "Box";
+      btn.hidden = false;
+      if (!waking) status.textContent = s.link === "up" ? "Cable connected." : "Cable: " + s.link;
     }
-    document.getElementById("title").textContent = s.box === "asleep" ? "The box is asleep" : "Box";
-    if (!waking) status.textContent = s.link === "up" ? "Cable connected." : "Cable: " + s.link;
   } catch (e) { status.textContent = "No answer from the relay."; }
   setTimeout(check, 3000);
 }
