@@ -143,6 +143,11 @@ services:
       memlock: -1
     # The engine releases its page-locked RAM on SIGTERM, which takes longer than Docker's 10 s.
     stop_grace_period: 60s
+    # Strata's server.py sets its SIGTERM handler only once the model is ready; as PID 1 it ignored
+    # SIGTERM while loading (1-3 min), so a stop then waited out the 60 s and was killed. Under an
+    # init, Python ends at once while loading and still shuts the engine down cleanly once ready.
+    # No TINI_KILL_PROCESS_GROUP: once ready, Python stops the engine itself.
+    init: true
     # The image's own check gives a start 10 minutes; a first start downloads ~70 GB.
     healthcheck:
       test: ["CMD", "curl", "-fs", "http://127.0.0.1:8080/health"]
