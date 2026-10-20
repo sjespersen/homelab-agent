@@ -198,6 +198,21 @@ def ram():
         return None
 
 
+def disks():
+    """Fill level in MiB of the models disk and the system disk (the container's / is the host's root fs)."""
+    out = []
+    for name, path in (("Models", MODELS_DIR), ("System", "/")):
+        try:
+            st = os.statvfs(path)
+        except OSError:
+            continue
+        # Like df: blocks reserved for root count as neither used nor free.
+        mib = lambda blocks: blocks * st.f_frsize // 2**20
+        out.append({"name": name, "total": mib(st.f_blocks), "used": mib(st.f_blocks - st.f_bfree),
+                    "free": mib(st.f_bavail)})
+    return out
+
+
 def leds_settings():
     """The settings file as the host's homelab-leds.sh reads it (same checks, same defaults)."""
     settings = dict(LEDS_DEFAULTS)
@@ -696,7 +711,7 @@ class Handler(BaseHTTPRequestHandler):
             total = None
             if g and g.get("power") is not None and c.get("power") is not None:
                 total = g["power"] + c["power"] + REST_WATTS
-            return self.json({"services": svcs, "gpu": g, "cpu": c, "ram": ram(), "total_power": total,
+            return self.json({"services": svcs, "gpu": g, "cpu": c, "ram": ram(), "disks": disks(), "total_power": total,
                               "rest_watts": REST_WATTS, "switching": switching["to"],
                               "error": switching["error"], "leds": leds(),
                               "idle_minutes": IDLE_MINUTES, "idle_stop": activity["idle_stop"],
@@ -1080,6 +1095,7 @@ const ICONS = {
   gpu: '<rect x="2.5" y="6" width="19" height="11" rx="2"/><circle cx="9" cy="11.5" r="3"/><path d="M15 9.5h3.5M15 13.5h3.5M6 17v2.5M18 17v2.5"/>',
   cpu: '<rect x="6" y="6" width="12" height="12" rx="2"/><rect x="9.5" y="9.5" width="5" height="5" rx="1"/><path d="M9 3v3M15 3v3M9 18v3M15 18v3M3 9h3M3 15h3M18 9h3M18 15h3"/>',
   ram: '<rect x="2" y="7" width="20" height="9" rx="1.5"/><path d="M6 10v3M10 10v3M14 10v3M18 10v3M5 16v2.5M19 16v2.5"/>',
+  disk: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 14h18"/><circle cx="17" cy="16.5" r=".6"/>',
   bolt: '<path d="M13 2L4.5 13.5H11l-1 8.5 8.5-11.5H12z"/>',
   idle: '<rect x="2.5" y="6" width="19" height="11" rx="2" stroke-dasharray="3 2.5"/>',
   arrow: '<path d="M7 17L17 7M9 7h8v8"/>',
@@ -1304,6 +1320,15 @@ function vitals(d) {
     out.push(section('ram', 'Memory', gb(m.total) + ' GB',
       metric('In use', `${gb(m.used)}<small> / ${gb(m.total)} GB</small>`, `<div class="bar"><i style="width:${p}%"></i></div>`,
         `${gb(m.total - m.used)} GB free`, 'wide ' + lvl(p, 80, 92))));
+  }
+  if (d.disks && d.disks.length) {
+    const size = mib => mib >= 1024 * 1024 ? `${(mib / 1024 / 1024).toFixed(2)}<small> TB</small>` : `${Math.round(mib / 1024)}<small> GB</small>`;
+    out.push(section('disk', 'Storage', 'SSDs', d.disks.map(s => {
+      const p = 100 * s.used / (s.used + s.free);
+      return metric(s.name, `${size(s.used)}<small> / </small>${size(s.total)}`,
+        `<div class="bar"><i style="width:${p}%"></i></div>`,
+        `${Math.round(s.free / 1024)} GB free · ${Math.round(p)}% used`, 'wide ' + lvl(p, 85, 95));
+    }).join('')));
   }
   let power;
   if (d.total_power != null) {
