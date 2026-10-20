@@ -5,7 +5,7 @@
         refine to ~1 MP) → upscale (SeedVR2, 1080p) → export (clips + an EDL for Resolve)
 
 Projects (brief, characters, reference photos, the shot list) live in DATA, which is backed up;
-the renders in MEDIA, on the models disk. One job runs at a time; the jobs ask the switcher for
+the renders in MEDIA, on the media disk. One job runs at a time; the jobs ask the switcher for
 the GPU (Qwen for the shot list, SwarmUI for the rest) and hold it while they run.
 """
 import base64
@@ -28,6 +28,7 @@ import urllib.request
 import zipfile
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+import apilog
 import comfy
 import workflows as wf
 
@@ -342,11 +343,21 @@ def llm(system, user, model, images=()):
                 "reasoning_effort": "medium", "chat_template_kwargs": {"reasoning_effort": "medium"}}
     req = urllib.request.Request(SWITCHER + path, data=json.dumps(body).encode(), method="POST",
                                  headers={"Authorization": "Bearer " + API_KEY, "Content-Type": "application/json"})
+    t = time.time()
     try:
         with urllib.request.urlopen(req, timeout=3 * 3600) as r:
             answer = json.loads(r.read())
     except urllib.error.HTTPError as e:
-        raise RuntimeError(f"{model}: HTTP {e.code} {e.read()[:300].decode(errors='replace')}") from None
+        error = e.read()[:2000].decode(errors="replace")
+        apilog.write("llm", path=path, request=apilog.without_images(body), status=e.code, error=error,
+                     seconds=round(time.time() - t, 1))
+        raise RuntimeError(f"{model}: HTTP {e.code} {error[:300]}") from None
+    except OSError as e:
+        apilog.write("llm", path=path, request=apilog.without_images(body), error=str(e),
+                     seconds=round(time.time() - t, 1))
+        raise
+    apilog.write("llm", path=path, request=apilog.without_images(body), response=answer,
+                 seconds=round(time.time() - t, 1))
     if found["via"] == "ollama":
         return (answer.get("message") or {}).get("content") or ""
     return answer["choices"][0]["message"].get("content") or ""

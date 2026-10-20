@@ -10,6 +10,8 @@ import urllib.parse
 import urllib.request
 import uuid
 
+import apilog
+
 BASE = os.environ.get("COMFY_URL", "http://swarmui:7801/ComfyBackendDirect")
 CLIENT = "homelab-studio"
 COMFY_DIR = os.environ.get("COMFY_DIR", "/comfy/ComfyUI")  # ComfyUI's folders, to delete its copies
@@ -134,7 +136,14 @@ def forget(names=(), output=None):
 def run(graph, dest, stop=lambda: False):
     """Queues the graph, waits, saves its (last) output file to dest. Returns seconds taken."""
     t = time.time()
-    entry = wait(queue(graph), stop=stop)
+    try:
+        prompt_id = queue(graph)
+        entry = wait(prompt_id, stop=stop)
+    except ComfyError as e:
+        apilog.write("comfy", graph=graph, error=str(e), seconds=round(time.time() - t))
+        raise
+    apilog.write("comfy", graph=graph, prompt_id=prompt_id, outputs=entry.get("outputs"),
+                 status=entry.get("status"), seconds=round(time.time() - t))
     # Only what the graph saved: LoadVideo lists its input too, in no fixed order, and taking
     # that one gave an "upscale" that was the final again.
     files = [f for f in outputs(entry) if f[2] == "output"]

@@ -311,6 +311,9 @@ curl http://<name>.local:8005/v1/chat/completions -H "Authorization: Bearer $key
   renders in `AI_MEDIA_DIR/studio/` (not backed up: export what you keep). ComfyUI keeps a copy
   of every upload and render; the Studio deletes them after each job. Deleting a shot or a
   project deletes its renders and photos too.
+- The Studio's API log: every request to the chat models and ComfyUI with what came back
+  (pictures as their size), in `AI_MEDIA_DIR/studio/logs/api.jsonl`, rotated at 10 MB with 5
+  old files kept. Not backed up. `tail -f /srv/media/studio/logs/api.jsonl | jq`
 
 ## Updates
 

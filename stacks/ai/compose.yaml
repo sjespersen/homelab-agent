@@ -355,6 +355,7 @@ services:
       COMFY_URL: http://swarmui:7801/ComfyBackendDirect
       SWITCHER: http://switcher:8079
       STUDIO_LLM: "${AI_STUDIO_LLM}"
+      TZ: ${TZ}   # the API log's times
     ports:
       - "127.0.0.1:8078:8078"
     volumes:
