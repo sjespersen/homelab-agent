@@ -63,6 +63,29 @@ sudo systemctl restart NetworkManager && sudo systemctl daemon-reexec
 
 Check it with `journalctl -u aiwake-watchdog` and `iw dev wlan0 get power_save` (should be `off`).
 
+### sudo with Touch ID
+
+So that changes on the Pi need your fingerprint instead of typing the password,
+`sudo-agent-auth.sh` makes sudo accept a signature from your forwarded SSH agent
+(`libpam-ssh-agent-auth`). The password still works as a fallback.
+
+1. On the Mac, install [Secretive](https://github.com/maxgoedjen/secretive)
+   (`brew install --cask secretive`), turn on its agent and create a key that requires
+   authentication. It lives in the Secure Enclave and asks for Touch ID on every use.
+2. On the Pi: `sudo bash sudo-agent-auth.sh "<that key's public key>"`
+   (`SSH_AUTH_SOCK=~/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh ssh-add -L`).
+3. In `~/.ssh/config`, a host that logs in with your normal key and forwards only Secretive:
+
+   ```
+   Host aiwake-root
+     HostName aiwake.local
+     HostKeyAlias aiwake.local
+     User sjespersen
+     ForwardAgent ~/Library/Containers/com.maxgoedjen.Secretive.SecretAgent/Data/socket.ssh
+   ```
+
+   `ssh aiwake-root sudo …` then waits for your fingerprint.
+
 ## The box
 
 Turn on Wake-on-LAN for that port: set `WAKE_ON_LAN_IFACE` and `WAKE_ON_LAN_MAC` and run

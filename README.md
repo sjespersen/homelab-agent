@@ -203,7 +203,10 @@ agent) gets a lot. Read this before you put anything valuable on the box.
   its own read-only Docker proxy (list, inspect, logs, events), on an internal network nothing
   else is on. The logs stay on the media disk, out of the backups, for 30 days.
 - The wake relay Pi (`extras/wake-relay`) answers `/api/wake` without a login to anyone on the
-  LAN; all it can do is send the magic packet to the box.
+  LAN; all it can do is send the magic packet to the box. sudo on it can accept a key from your
+  forwarded SSH agent (`sudo-agent-auth.sh`); with Secretive that key stays in the Mac's Secure
+  Enclave and every use needs Touch ID, so whoever is root on the Pi can't use it unnoticed.
+  Only that one key is accepted, and it is forwarded only to the Pi.
 - Hermes pushes to GitHub with per-repo deploy keys, not your account.
 - The Mac's backup key can only read the backup folder (`rrsync -ro`).
 - Backups are encrypted with restic.
