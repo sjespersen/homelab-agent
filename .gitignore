@@ -2,6 +2,8 @@
 config.env
 config.*.env
 !config.example.env
+# Notes about your own servers (hosts, disks, quirks).
+*.local.md
 # Runtime data and secrets live on the server and in the restic backup, never in git.
 data/
 etc-pihole/
