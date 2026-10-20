@@ -34,6 +34,31 @@ Set it up:
 
 The service uses the first wired interface; set `AIWAKE_IFACE` if there's more than one.
 
+### Keeping it on Wi-Fi
+
+After the router resets its Wi-Fi, the Pi sometimes doesn't reconnect, and then nothing reaches
+`/api/wake`. So the Pi gets three fixes:
+
+- `aiwake-wifi-powersave.conf` turns Wi-Fi power saving off. That setting makes the Zero 2 W's
+  Wi-Fi drop off.
+- `aiwake-watchdog.sh` (via `aiwake-watchdog.timer`, every minute) pings the router over `wlan0`.
+  If the router doesn't answer 3 times in a row, NetworkManager reconnects. If that doesn't
+  help, the radio is switched off and on, and after 5 more failures the Pi reboots (at most
+  every 30 minutes).
+- `aiwake-hw-watchdog.conf` makes systemd use the hardware watchdog, so a hung Pi restarts
+  itself.
+
+```sh
+sudo install -m 755 aiwake-watchdog.sh /usr/local/sbin/
+sudo install -m 644 aiwake-watchdog.service aiwake-watchdog.timer /etc/systemd/system/
+sudo install -D -m 644 aiwake-wifi-powersave.conf /etc/NetworkManager/conf.d/aiwake-wifi-powersave.conf
+sudo install -D -m 644 aiwake-hw-watchdog.conf /etc/systemd/system.conf.d/aiwake-hw-watchdog.conf
+sudo systemctl daemon-reload && sudo systemctl enable --now aiwake-watchdog.timer
+sudo systemctl restart NetworkManager && sudo systemctl daemon-reexec
+```
+
+Check it with `journalctl -u aiwake-watchdog` and `iw dev wlan0 get power_save` (should be `off`).
+
 ## The box
 
 Turn on Wake-on-LAN for that port: set `WAKE_ON_LAN_IFACE` and `WAKE_ON_LAN_MAC` and run

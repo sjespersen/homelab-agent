@@ -1,0 +1,7 @@
+[Unit]
+Description=aiwake: reconnect Wi-Fi (or reboot) when the router stops answering
+After=NetworkManager.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/aiwake-watchdog.sh wlan0
