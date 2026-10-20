@@ -1,6 +1,6 @@
 #!/bin/bash
 # Usage: sudo bash sudo-agent-auth.sh "<ssh public key>"
-# Lets sudo on the Pi accept a signature from your forwarded SSH agent instead of the password.
+# Lets sudo accept a signature from your forwarded SSH agent instead of the password.
 # With a key that asks for Touch ID on every use (Secretive on a Mac), sudo then waits for your
 # fingerprint. The password still works as a fallback.
 set -eu

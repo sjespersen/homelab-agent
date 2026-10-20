@@ -203,10 +203,11 @@ agent) gets a lot. Read this before you put anything valuable on the box.
   its own read-only Docker proxy (list, inspect, logs, events), on an internal network nothing
   else is on. The logs stay on the media disk, out of the backups, for 30 days.
 - The wake relay Pi (`extras/wake-relay`) answers `/api/wake` without a login to anyone on the
-  LAN; all it can do is send the magic packet to the box. sudo on it can accept a key from your
-  forwarded SSH agent (`sudo-agent-auth.sh`); with Secretive that key stays in the Mac's Secure
-  Enclave and every use needs Touch ID, so whoever is root on the Pi can't use it unnoticed.
-  Only that one key is accepted, and it is forwarded only to the Pi.
+  LAN; all it can do is send the magic packet to the box.
+- With `extras/sudo-touch-id`, sudo also accepts a key from your forwarded SSH agent. With
+  Secretive that key stays in the Mac's Secure Enclave and every use needs Touch ID, so whoever
+  is root on a server can't use the forwarded agent unnoticed. Only that one key is accepted, and
+  only the `-root` SSH hosts forward it. The password still works.
 - Hermes pushes to GitHub with per-repo deploy keys, not your account.
 - The Mac's backup key can only read the backup folder (`rrsync -ro`).
 - Backups are encrypted with restic.
@@ -404,6 +405,8 @@ to "wake the gpubox". The other computer has to allow Wake-on-LAN (see `extras/w
 - `extras/wifi-watchdog/`: reconnects Wi-Fi when it stays connected but stops passing traffic.
   See its README.
 - `extras/wake-on-lan/`: wakes the box over the network from suspend or off (`WAKE_ON_LAN_*`).
+  See its README.
+- `extras/sudo-touch-id/`: sudo waits for your fingerprint on the Mac instead of the password.
   See its README.
 - `extras/wake-relay/`: wakes the box while it's on Wi-Fi, through a Pi cabled to its Ethernet
   port (`WAKE_RELAY_*`). See its README.
