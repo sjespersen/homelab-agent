@@ -37,7 +37,7 @@ The service uses the first wired interface; set `AIWAKE_IFACE` if there's more t
 ### Keeping it on Wi-Fi
 
 After the router resets its Wi-Fi, the Pi sometimes doesn't reconnect, and then nothing reaches
-`/api/wake`. So the Pi gets three fixes:
+`/api/wake`. So the Pi gets these fixes:
 
 - `aiwake-wifi-powersave.conf` turns Wi-Fi power saving off. That setting makes the Zero 2 W's
   Wi-Fi drop off.
@@ -47,12 +47,16 @@ After the router resets its Wi-Fi, the Pi sometimes doesn't reconnect, and then 
   every 30 minutes).
 - `aiwake-hw-watchdog.conf` makes systemd use the hardware watchdog, so a hung Pi restarts
   itself.
+- `aiwake-journal.conf` keeps the log across reboots (at most 30 MB), so a drop-out can be
+  traced afterwards.
 
 ```sh
 sudo install -m 755 aiwake-watchdog.sh /usr/local/sbin/
 sudo install -m 644 aiwake-watchdog.service aiwake-watchdog.timer /etc/systemd/system/
 sudo install -D -m 644 aiwake-wifi-powersave.conf /etc/NetworkManager/conf.d/aiwake-wifi-powersave.conf
 sudo install -D -m 644 aiwake-hw-watchdog.conf /etc/systemd/system.conf.d/aiwake-hw-watchdog.conf
+sudo install -D -m 644 aiwake-journal.conf /etc/systemd/journald.conf.d/aiwake-journal.conf
+sudo systemctl restart systemd-journald
 sudo systemctl daemon-reload && sudo systemctl enable --now aiwake-watchdog.timer
 sudo systemctl restart NetworkManager && sudo systemctl daemon-reexec
 ```
