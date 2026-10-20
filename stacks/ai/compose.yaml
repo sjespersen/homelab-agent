@@ -15,7 +15,7 @@ services:
   qwen27b:
     profiles: [qwen27b]
     # The CUDA 12.8 build: the cuda13 one needs a newer driver than Ubuntu's recommended one.
-    image: ghcr.io/ggml-org/llama.cpp:server-cuda@sha256:ccfd96bb2aba4ef77e3df656d713ce85bf3c6a886d7974243127c5ad66ca6d2a  # b11515
+    image: ghcr.io/ggml-org/llama.cpp:server-cuda@sha256:31b39eacce2bab5fde9286ec3980ed5548a3987644e94da0d0c2092f93313538  # b11749
     container_name: ai-qwen27b
     labels:
       homelab.ai.files: llama.cpp   # its models, for the switcher's cache drop
@@ -225,7 +225,7 @@ services:
   # fully on a 16 GB GPU; bigger ones spill into RAM and get slow (a 70B on DDR4: ~1-2 tok/s).
   # Not published: Open WebUI reaches it through the switcher (http://switcher:8079/ollama).
   ollama:
-    image: ollama/ollama:latest@sha256:adca95a12c2b386a8f9a995e7fa0600e187e3323b5e5522f5a6c3b1ec73eff99  # 0.40.3
+    image: ollama/ollama:latest@sha256:265409e1d931028a8f7d5a32bcbafddd7bffbc6cc629d77efe9560adf692a5e7  # 0.40.6
     container_name: ai-ollama
     labels:
       homelab.ai.title: Ollama
@@ -268,7 +268,7 @@ services:
   # with the 27B and Strata through their API, whichever has the GPU. Its own accounts: the
   # first one becomes admin; later sign-ups wait for the admin's approval.
   webchat:
-    image: ghcr.io/open-webui/open-webui:main@sha256:e597ba2ca4425ff40f1f677930baae1278cc1e44cea399d5f588d5ce53611910  # 0.12.0
+    image: ghcr.io/open-webui/open-webui:main@sha256:4860ba005ae8f19f08d1e12b0868855b7b339ea0dad9927f196820fc0de04575  # 0.12.3
     container_name: ai-webchat
     user: "${PUID}:${PGID}"
     ports:
@@ -375,7 +375,7 @@ services:
   # The switcher's only way to Docker: list and inspect containers, start and stop them.
   # Nothing that creates containers, runs commands in them or reads their files.
   socket-proxy:
-    image: lscr.io/linuxserver/socket-proxy:latest@sha256:0357c479cc98e863917d1cd8b10e83d35a50ca46a0788f5a192bf792c3b7100d  # 3.4.6-r0-ls100
+    image: lscr.io/linuxserver/socket-proxy:latest@sha256:e5d819de59b343c01b2fe7adc7fad3c7a60e5dba08e45f1ac317352bc08599b5  # 3.4.7-r0-ls103
     container_name: ai-socket-proxy
     environment:
       CONTAINERS: "1"

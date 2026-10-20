@@ -1,7 +1,7 @@
 # Uptime Kuma: status page and alerts. Served by Caddy at status.<DOMAIN>.
 services:
   uptime-kuma:
-    image: louislam/uptime-kuma:2@sha256:c74379ac4509ce2d2c2633f509e67003ee2e45b6e995c5e43fc101f45a0e1fbe  # built 2026-09-16
+    image: louislam/uptime-kuma:2@sha256:9912da7d7d9b6ddc0c2d904beb84d24689c1ed9c33b81419eb9008663a92a329  # built 2026-10-09
     container_name: uptime-kuma
     network_mode: host
     # Run as your user so the nightly backup can read ./data.

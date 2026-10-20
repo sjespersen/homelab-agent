@@ -27,7 +27,9 @@ for ref in "$@"; do
   digest=$(docker image inspect -f '{{range .RepoDigests}}{{println .}}{{end}}' "$ref" \
     | grep -m1 "^${ref%:*}@" | cut -d@ -f2)
   version=$(docker image inspect -f '{{index .Config.Labels "org.opencontainers.image.version"}}' "$ref")
-  if [[ -z $version || $version == "<no value>" ]]; then
+  # Not a version of this image: a branch name ("main"), or one inherited from an Ubuntu base
+  # image ("24.04", Ollama's). llama.cpp's are build numbers ("b11749").
+  if [[ ! $version =~ ^(v?[0-9]+\.[0-9]|b[0-9]+$) || $version =~ ^[0-9]{2}\.(04|10)$ ]]; then
     version="built $(docker image inspect -f '{{.Created}}' "$ref" | cut -c1-10)"
   fi
   echo "$ref $digest $version"
@@ -36,6 +38,8 @@ EOF
 )
 
 while read -r ref digest version; do
+  # Same build as pinned: keep the line, and the version someone may have written there by hand.
+  grep -qF "image: $ref@$digest" "${files[@]}" && continue
   REF=$ref DIGEST=$digest VER=$version perl -pi -e \
     's{^(\s*image:\s*)\Q$ENV{REF}\E(?:\@sha256:[0-9a-f]+)?.*$}{$1$ENV{REF}\@$ENV{DIGEST}  # $ENV{VER}}' \
     "${files[@]}"
