@@ -159,5 +159,14 @@ class Handler(BaseHTTPRequestHandler):
         print(self.address_string(), fmt % args, flush=True)
 
 
+class DualStackServer(ThreadingHTTPServer):
+    """Listens on IPv6 and IPv4: mDNS announces both addresses for aiwake.local."""
+    address_family = socket.AF_INET6
+
+    def server_bind(self):
+        self.socket.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 0)
+        super().server_bind()
+
+
 if __name__ == "__main__":
-    ThreadingHTTPServer(("", PORT), Handler).serve_forever()
+    DualStackServer(("::", PORT), Handler).serve_forever()
