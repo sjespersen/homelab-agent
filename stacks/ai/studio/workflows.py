@@ -137,11 +137,14 @@ def still(prompts, refs, size, seed, prefix, steps=8, ref_boost=2.0, loras=()):
     return g.nodes
 
 
-def _h3_base(g, prompt, first_frame, size, length, seed, steps):
+def _h3_base(g, prompt, first_frame, size, length, seed, steps, loras=()):
     """MiniMax H3 from a first frame, as in ComfyUI's "Image to Video (MiniMax H3)" with the
-    4-step turbo LoRA. Returns (model, clip, vae, audio_vae, image, sampled)."""
+    4-step turbo LoRA. `loras`: [(file, strength)] the project adds, after the turbo one.
+    Returns (model, clip, vae, audio_vae, image, sampled)."""
     unet = g.add("UNETLoader", unet_name=H3_UNET, weight_dtype="default")
     lora = g.add("LoraLoaderModelOnly", model=[unet, 0], lora_name=H3_TURBO, strength_model=1.0)
+    for name, strength in loras:
+        lora = g.add("LoraLoaderModelOnly", model=[lora, 0], lora_name=name, strength_model=float(strength))
     model = g.add("MiniMaxH3SigmaShift", model=[lora, 0], shift_video=12.0, shift_audio=3.0)
     clip = g.add("CLIPLoader", clip_name=H3_CLIP, type="minimax", device="default")
     vae = g.add("VAELoader", vae_name=H3_VAE)
@@ -159,24 +162,24 @@ def _h3_base(g, prompt, first_frame, size, length, seed, steps):
     return model, clip, vae, audio_vae, image, sampled, noise, sampler
 
 
-def preview(prompt, first_frame, size, seconds, seed, prefix, steps=4):
+def preview(prompt, first_frame, size, seconds, seed, prefix, steps=4, loras=()):
     """The low-resolution pass, to judge the motion."""
     g = Graph()
-    _, _, vae, audio_vae, _, sampled, _, _ = _h3_base(g, prompt, first_frame, size, frames(seconds), seed, steps)
+    _, _, vae, audio_vae, _, sampled, _, _ = _h3_base(g, prompt, first_frame, size, frames(seconds), seed, steps, loras)
     images = g.add("VAEDecode", samples=[sampled, 0], vae=[vae, 0])
     audio = g.add("VAEDecodeAudio", samples=[sampled, 0], vae=[audio_vae, 0])
     _save_video(g, [images, 0], [audio, 0], prefix, crf=20)
     return g.nodes
 
 
-def final(prompt, first_frame, preview_size, size, seconds, seed, prefix, steps=4, refine="standard"):
-    """The approved preview again (same seed, so the same motion), its video latent upscaled by
-    the learned H3 upscaler, then a short refine pass at full size: the node pack's example
-    workflow ("minimax_h3_i2v Latent Upscaler")."""
+def final(prompt, first_frame, preview_size, size, seconds, seed, prefix, steps=4, refine="standard", loras=()):
+    """The approved preview again (same seed and LoRAs, so the same motion), its video latent
+    upscaled by the learned H3 upscaler, then a short refine pass at full size: the node pack's
+    example workflow ("minimax_h3_i2v Latent Upscaler")."""
     g = Graph()
     length = frames(seconds)
     model, clip, vae, audio_vae, image, sampled, noise, sampler = _h3_base(
-        g, prompt, first_frame, preview_size, length, seed, steps)
+        g, prompt, first_frame, preview_size, length, seed, steps, loras)
     w, h = size
     av = g.add("LTXVSeparateAVLatent", av_latent=[sampled, 0])
     up = g.add("MinimaxH3LatentUpscaler3D", latent=[av, 0], model_name=H3_UPSCALER, align=32,

@@ -294,6 +294,8 @@ function renderProject(first) {
             `<option value="${v}" ${(P.upscale || 'clean') === v ? 'selected' : ''}>${l}</option>`).join('')}</select></div></div>
         <label>LoRAs for the stills and place images (Krea 2, from SwarmUI's Models/Lora)</label>
         <div id="loras" class="loras"></div>
+        <label>Video LoRAs for the previews and finals (MiniMax H3, from SwarmUI's Models/Lora)</label>
+        <div id="video-loras" class="loras"></div>
         <div class="row" style="margin-top:10px"><button class="primary" id="write">${icon('wand')}Write shot list</button>
           <label style="margin:0;display:flex;gap:5px;align-items:center"><input type="checkbox" id="replace" style="width:auto"> replace the current shots</label></div>
         <div class="row" style="margin-top:10px"><div class="grow"><label>Model for the shot list and rewrites</label>
@@ -516,31 +518,39 @@ function isRunning(s, kind) {
   return r && r.project === P.id && r.shot === s.id && (!kind || r.kind === kind);
 }
 function isQueued(s, kind) { return (STATE.queue || []).some(t => t.project === P.id && t.shot === s.id && t.kind === kind); }
-// LoRAs: the installed Krea 2 ones; the project keeps [{file, strength}].
+// LoRAs: the installed Krea 2 ones (stills) and MiniMax H3 ones (previews and finals); the
+// project keeps [{file, strength}] under `loras` and `video_loras`.
 let LORAS = null;
 async function loadLoras() {
-  try { LORAS = (await api('GET', '/api/loras')).loras; } catch (e) { return; }
-  renderLoras();
+  try { LORAS = await api('GET', '/api/loras'); } catch (e) { return; }
+  renderLoras('loras'); renderLoras('video_loras');
 }
-function renderLoras() {
-  const box = $('loras'); if (!box || !LORAS) return;
-  const cur = P.loras || [], title = f => (LORAS.find(x => x.file === f) || {}).title || f + ' (not installed)';
-  const opts = sel => LORAS.map(x => `<option value="${esc(x.file)}" title="${esc(x.file)}" ${x.file === sel ? 'selected' : ''}>${esc(x.title)}</option>`).join('')
-    + (sel && !LORAS.some(x => x.file === sel) ? `<option value="${esc(sel)}" selected>${esc(title(sel))}</option>` : '');
+const LORA_HINTS = {
+  loras: ['Strong styles can fight the identity LoRA: 0.5-0.8 is a good start.', 'None: Krea 2 as it is.', 'No Krea 2 LoRAs in SwarmUI\'s Models/Lora.'],
+  video_loras: ['Used from the next preview on; a final keeps its preview\'s LoRAs.', 'None: H3 with only the turbo LoRA.', 'No MiniMax H3 LoRAs in SwarmUI\'s Models/Lora.'],
+};
+function renderLoras(key) {
+  const box = $(key.replace('_', '-')); if (!box || !LORAS) return;
+  const list = LORAS[key] || [], [busyHint, noneHint, emptyHint] = LORA_HINTS[key];
+  const cur = P[key] || [], title = f => (list.find(x => x.file === f) || {}).title || f + ' (not installed)';
+  const opts = sel => list.map(x => `<option value="${esc(x.file)}" title="${esc(x.file)}" ${x.file === sel ? 'selected' : ''}>${esc(x.title)}</option>`).join('')
+    + (sel && !list.some(x => x.file === sel) ? `<option value="${esc(sel)}" selected>${esc(title(sel))}</option>` : '');
   box.innerHTML = cur.map((x, i) => `<div class="row" data-i="${i}"><select class="f">${opts(x.file)}</select>
       <input class="w" type="number" step="0.05" min="-2" max="2" value="${x.strength}" title="Strength">
       <button class="small x" title="Remove">${icon('x')}</button></div>`).join('')
-    + (LORAS.length ? `<div><button class="small" id="add-lora" ${cur.length >= 4 ? 'disabled' : ''}>${icon('plus')}LoRA</button>
-      <span class="hint">${cur.length ? 'Strong styles can fight the identity LoRA: 0.5-0.8 is a good start.' : 'None: Krea 2 as it is.'}</span></div>`
-      : '<div class="hint">No Krea 2 LoRAs in SwarmUI\'s Models/Lora.</div>');
-  const send = list => api('POST', `/api/projects/${P.id}/update`, {loras: list}).then(d => { P = d; renderLoras(); });
+    + (list.length ? `<div><button class="small add" ${cur.length >= 4 ? 'disabled' : ''}>${icon('plus')}LoRA</button>
+      <span class="hint">${cur.length ? busyHint : noneHint}</span></div>`
+      : `<div class="hint">${emptyHint}</div>`);
+  const send = l => api('POST', `/api/projects/${P.id}/update`, {[key]: l}).then(d => { P = d; renderLoras(key); });
   box.querySelectorAll('[data-i]').forEach(r => {
     const i = +r.dataset.i, edit = c => send(cur.map((x, j) => j === i ? {...x, ...c} : x));
     r.querySelector('.f').onchange = e => edit({file: e.target.value});
     r.querySelector('.w').onchange = e => edit({strength: parseFloat(e.target.value) || 0});
     r.querySelector('.x').onclick = () => send(cur.filter((_, j) => j !== i));
   });
-  const add = $('add-lora'); if (add) add.onclick = () => send([...cur, {file: (LORAS.find(x => !cur.some(c => c.file === x.file)) || LORAS[0]).file, strength: 0.8}]);
+  const add = box.querySelector('.add');
+  if (add) add.onclick = () => send([...cur, {file: (list.find(x => !cur.some(c => c.file === x.file)) || list[0]).file,
+                                              strength: key === 'loras' ? 0.8 : 1.0}]);
 }
 
 // The models the shot list can use (the switcher's and Ollama's, as in Open WebUI).
@@ -640,7 +650,7 @@ function updateShot(el, s, i) {
   fill(el.querySelector('.s-still'), s, 'still', s.still && `<img src="${media(s, s.still.file)}" alt="">`,
     s.still ? (s.still.picture ? 'the picture' : `seed ${s.still.seed} · ${s.still.took}s`) + (s.still.loras ? ' · LoRA' : '') : '', [['redo', s.still ? 'New still' : 'Make', () => run('still', s)]]);
   fill(el.querySelector('.s-preview'), s, 'preview', s.preview && `<video src="${media(s, s.preview.file)}" controls loop playsinline preload="metadata"></video>`,
-    s.preview ? (st.preview_outdated ? (st.prompt_changed ? 'prompt changed' : 'new still since') : `${s.preview.took}s`) : '',
+    s.preview ? (st.preview_outdated ? (st.prompt_changed ? 'prompt changed' : 'new still since') : `${s.preview.took}s` + (s.preview.video_loras ? ' · LoRA' : '')) : '',
     [...(s.preview ? [['check', s.review === 'approved' ? 'Approved' : 'Approve', () => patch(s, {review: s.review === 'approved' ? 'pending' : 'approved'}), s.review === 'approved']] : []),
      ['redo', s.preview ? 'Retry' : 'Render', () => run('preview', s), false, !s.still]]);
   fill(el.querySelector('.s-final'), s, 'final', s.final && `<video src="${media(s, s.final.file)}" controls loop playsinline preload="metadata"></video>`,

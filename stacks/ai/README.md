@@ -209,8 +209,12 @@ models). SwarmUI fetches text encoders and VAEs itself on first use.
    lists only Krea 2 ones), each with a strength, to the stills and place images; the character
    photos stay without them, so the identity passes start from a neutral photo.
 3. **Previews**: MiniMax H3 animates the still at ~0.3 MP (736×416 for 16:9), with sound.
+   Under the brief, **Video LoRAs** adds MiniMax H3 LoRAs from SwarmUI's `Models/Lora` (the
+   Studio tells them from Krea 2 ones by their headers, else their key names: H3's attention
+   has a fused `qkv_proj`), each with a strength, after the turbo LoRA. A preview keeps the
+   LoRAs it was made with.
 4. **Review**: approve, retry (a new seed) or reject each preview; only approved ones go on.
-5. **Finals**: the approved preview again (same seed, frame and prompt, so the same motion),
+5. **Finals**: the approved preview again (same seed, frame, prompt and video LoRAs, so the same motion),
    its latent upscaled by a learned H3 upscaler and refined at H3's full size (1344×768; H3
    doesn't go past 768×1344). "Gentle" in the brief's settings keeps closer to the preview.
 6. **Upscale** to 1080p, set per project: **Clean** (the default: Lanczos only, ~20 s, nothing
