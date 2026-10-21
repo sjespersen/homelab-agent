@@ -25,7 +25,9 @@ sleep 3
 cat /opt/data/wake/result
 ```
 
-The result line says whether the wake-up was sent, or that the name is unknown.
+The result line says whether the wake-up was sent, or that the name is unknown. If it says
+"still trying", the host keeps trying for up to 90 seconds: check the result again every few
+seconds until it says something else.
 
 Then wait for the device: about 10 seconds from sleep, about 30-60 seconds from off. If you
 know a web address on it, check with `curl -s -o /dev/null -w '%{http_code}\n' <url>` until it

@@ -19,11 +19,18 @@ for t in $targets; do
   [[ ${t%%=*} == "$name" ]] && mac=${t#*=}
 done
 if [[ $mac =~ ^https?://[A-Za-z0-9.:/_-]+$ ]]; then
-  if out=$(curl -fsS -m 10 -X POST "$mac" 2>&1); then
-    echo "$(date -Is) asked $name to wake up ($mac): ${out//$'\n'/ }" >"$dir/result"
-  else
-    echo "$(date -Is) couldn't reach $name's wake URL ($mac): ${out//$'\n'/ }" >"$dir/result"
-  fi
+  # The device behind the URL (e.g. a Pi on Wi-Fi) can drop off for a minute or two, so keep
+  # trying for 90 seconds.
+  deadline=$((SECONDS + 90))
+  until out=$(curl -fsS -m 10 -X POST "$mac" 2>&1); do
+    if ((SECONDS >= deadline)); then
+      echo "$(date -Is) couldn't reach $name's wake URL ($mac): ${out//$'\n'/ }" >"$dir/result"
+      exit 0
+    fi
+    echo "$(date -Is) still trying to reach $name's wake URL ($mac): ${out//$'\n'/ }" >"$dir/result"
+    sleep 5
+  done
+  echo "$(date -Is) asked $name to wake up ($mac): ${out//$'\n'/ }" >"$dir/result"
   exit 0
 fi
 if [[ ! $mac =~ ^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$ ]]; then
