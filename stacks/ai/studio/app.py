@@ -537,6 +537,10 @@ def write_shots(p, replace):
     with open(os.path.join(DATA, "last-shot-list.txt"), "w", encoding="utf-8") as f:
         f.write(text)  # for when an answer doesn't parse as expected
     start, end = text.find("{"), text.rfind("}")
+    if start < 0:
+        # No JSON at all: most often the model declined the brief. Another one may not.
+        raise RuntimeError(f"{model} didn't write a shot list, it may have declined the brief; "
+                           "pick another shot-list model. It said: " + text.strip()[:200])
     try:
         answer = json.loads(text[start:end + 1])
         shots = answer["shots"]
