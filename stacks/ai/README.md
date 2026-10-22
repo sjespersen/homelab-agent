@@ -262,6 +262,11 @@ LoRA, and [the H3 latent upscaler](https://github.com/xmarre/Comfyui_Minimax_h3_
 prompt guide (`references/base-en.txt`, pinned to a commit and checked by hash) into
 `data/studio/`; without it, Qwen still writes the format from a short summary.
 
+**Your own instructions.** The Studio's instructions to the models (`SHOT_PROMPT`,
+`REWRITE_PROMPT`, `MOTION_FORMAT`, `PICTURE_PROMPT` in `studio/app.py`) are defaults. A file
+`data/studio/prompts/<NAME>.txt` replaces one, read on each use, so your own versions stay on
+the box (and in the backup), out of git.
+
 **Licenses.** MiniMax H3's license excludes the US, UK, EU and South Korea unless MiniMax
 authorizes you (apply on their H3 license page; keep their email). The identity LoRA is free
 for personal, non-commercial use only. The H3 upscaler's repository and MiniMax's H3 repository (the prompt guide) have no license; that's why the guide is fetched, not kept here.

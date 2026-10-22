@@ -258,6 +258,19 @@ def hold_loop():
 
 # --- The shot list (Qwen) ------------------------------------------------------------------
 
+# The instructions below are the defaults. A file of the same name in data/studio/prompts/
+# (e.g. SHOT_PROMPT.txt) replaces one, so your own versions stay on the box, out of git.
+PROMPTS = os.path.join(DATA, "prompts")
+
+
+def own(name):
+    try:
+        with open(os.path.join(PROMPTS, name + ".txt"), encoding="utf-8") as f:
+            return f.read()
+    except OSError:
+        return globals()[name]
+
+
 SHOT_PROMPT = """You are a film director's assistant. Turn the brief into a shot list for an AI video pipeline.
 
 Each shot is made in two steps:
@@ -270,15 +283,34 @@ Answer with JSON only, no other text:
 {"places": [{"name": "short name", "look": "..."}],
  "outfits": [{"character": "exact character name", "name": "short name", "look": "..."}],
  "shots": [{"title": "...", "place": "a place name", "seconds": 5-12,
-   "cast": [{"character": "exact character name", "outfit": "an outfit name", "position": "..."}],
-   "still_prompt": "...", "motion_prompt": "..."}]}
+   "frame": {"shot": "...", "place_seen": "...", "props": "...", "light": "...", "style": "..."},
+   "cast": [{"character": "exact character name", "outfit": "an outfit name", "position": "...",
+             "visible": "...", "body": "...", "arms_hands": "...", "legs": "...", "head": "...",
+             "expression": "...", "action": "...", "touching": "..."}],
+   "motion_prompt": "..."}]}
 
 - A place's look: the room or landscape, the fixed furniture and props and where they stand, colours and materials, the time of day, and the light sources and where they are. Concrete enough that two pictures of it match.
 - An outfit's look: each garment with colour and material, shoes, hair, jewellery, and what is NOT worn (the model copies clothes from the reference photo otherwise: "no jacket, bare arms"). A character keeps an outfit until the brief changes it.
-- cast: everyone recurring in the shot. position: where they are in the frame ("on the left", "on the right", "in the centre", "in the background"), different for each person in the shot.
-- still_prompt: only what this shot adds: the framing, how much of each person is visible ("full body", "waist up", "close-up of her hands"), the camera angle, poses, actions, expressions, which part of the place is seen, and the light by where it lands ("warm window light across her left cheek"). Refer to people by name. Don't repeat the place's or the outfits' looks.
-- motion_prompt: one string holding the three H3 fields described below.
-- Keep the story continuous: what a shot shows (props, state of things, positions) follows from the shot before unless there's a cut in time.
+- Every shot stands alone. The image model and the video model each get one shot's text and nothing else: no brief, no other shots. So write each shot as if it were the only one, with everything needed to make it. Never lean on another shot: no "still", "again", "as before", "continues", "the same pose", "now", "then"; say what is there.
+- frame and cast together are the shot's first frame (the pipeline joins them into the image prompt). Fill every field with one or two full, concrete sentences; a field never says "same", "as before" or "N/A" when there is something to see. The whole frame comes to about 150-250 words.
+  - frame.shot: the shot type (wide, medium, close-up, ...), the camera's height and angle, the lens feel (wide-angle, telephoto, shallow focus) and what the frame is centred on.
+  - frame.place_seen: which part of the place is in the frame, what is in the foreground and the background, and where in the frame it is. Don't copy the place's look: the pipeline adds it.
+  - frame.props: the objects in the frame and the state of things (an open suitcase, a coat on a chair, a spilled glass, a door ajar), including changes from earlier in the story.
+  - frame.light: the light sources, their colour and direction, where the light lands on whom ("warm window light across her left cheek") and where the shadows fall.
+  - frame.style: the look of the picture: photographic style, colour palette, mood.
+- cast: everyone recurring in the shot, each with all of:
+  - position: where they are in the frame ("on the left", "on the right", "in the centre", "in the background"), different for each person.
+  - visible: how much of them is in the frame ("full body", "from the waist up", "only her hands and forearms") and which way they face the camera.
+  - body: the posture and orientation of the torso and hips (sitting upright, kneeling, leaning forward, twisted towards the camera).
+  - arms_hands: where each arm and hand is and what it holds or touches.
+  - legs: where the legs are and how they are bent, or "out of frame".
+  - head: the head's angle and where the eyes look. Never describe the face itself: it comes from the reference photo.
+  - expression: the expression and what the body language says.
+  - action: what they are doing at this instant.
+  - touching: where they touch other people or things, or "nobody".
+  - Name changes to the outfit in this shot (hair now wet, jacket off) in body or head; don't copy the outfit's look, the pipeline adds it.
+- motion_prompt: one string holding the three H3 fields described below, just as self-contained. integrated_multimodal_description starts by describing the first frame again in two or three sentences: who is where in the frame by name and position ("Mara, on the right, hands Jonas, on the left, a coffee cup, ..."), their poses and the setting. Then the whole action of this clip from its first second to its last, in order, with what each body part does, then the camera. Never "continue": say what happens.
+- Keep the story continuous by what you write, not by reference: what a shot shows (props, state of things, positions, clothes) follows from the shot before unless there's a cut in time, and each shot spells that state out again in full.
 - Vary the framing (wide, medium, close-up); keep motion simple and physical; no on-screen text unless asked.
 """
 
@@ -316,7 +348,7 @@ def with_guide(system):
             guide = f.read()
     except OSError:
         guide = ""
-    out = system + "\n" + MOTION_FORMAT
+    out = system + "\n" + own("MOTION_FORMAT")
     if guide:
         out += ("\nMiniMax's H3 prompt-writing guide follows. Use its I2VA mode; the cases show finished prompts."
                 f"\n\n<guide>\n{guide}\n</guide>\n")
@@ -386,7 +418,7 @@ def read_picture(p):
         image = base64.b64encode(f.read()).decode()
     chars = ", ".join(f"{c['name']} ({c.get('description') or 'no description'})" for c in p["characters"]) or "none"
     model = vision_model(p)
-    text = llm(PICTURE_PROMPT, f"What should happen (the user's text):\n{p['brief']}\n\nKnown characters: {chars}",
+    text = llm(own("PICTURE_PROMPT"), f"What should happen (the user's text):\n{p['brief']}\n\nKnown characters: {chars}",
                model, [image])
     start, end = text.find("{"), text.rfind("}")
     try:
@@ -404,7 +436,7 @@ def take_picture(p, reading):
     w, h = p["picture"]["w"], p["picture"]["h"]
     place = reading.get("place") if isinstance(reading.get("place"), dict) else {}
     lines = [f"The film opens on a picture the user gave; shot 1 starts from exactly this picture. "
-             f"Copy this as shot 1's still_prompt:\n{reading.get('still_prompt', '')}"]
+             f"Shot 1's frame and cast describe this picture:\n{reading.get('still_prompt', '')}"]
     if place.get("look"):
         p["places"].append({"id": new_id("l"), "name": str(place.get("name") or "The picture")[:60],
                             "look": str(place["look"])[:2000]})
@@ -484,6 +516,7 @@ def write_shots(p, replace):
     opening = ""
     if p.get("picture") and (replace or not p["shots"]):
         reading = read_picture(p)
+        opening_prompt = str(reading.get("still_prompt", ""))
         with lock:
             if replace:
                 p["places"], p["outfits"] = [], []
@@ -500,7 +533,7 @@ def write_shots(p, replace):
     if opening:
         user += "\n\n" + opening
     model = p.get("llm") or LLM_MODEL
-    text = llm(with_guide(SHOT_PROMPT), user, model)
+    text = llm(with_guide(own("SHOT_PROMPT")), user, model)
     with open(os.path.join(DATA, "last-shot-list.txt"), "w", encoding="utf-8") as f:
         f.write(text)  # for when an answer doesn't parse as expected
     start, end = text.find("{"), text.rfind("}")
@@ -550,11 +583,12 @@ def write_shots(p, replace):
         out.append({"id": new_id("s"), "title": str(s.get("title", ""))[:80],
                     "characters": list(cast), "cast": cast,
                     "place": place_ids.get(str(s.get("place", "")).strip().lower()),
-                    "seconds": seconds, "still_prompt": str(s.get("still_prompt", "")),
+                    "seconds": seconds, "still_prompt": frame_text(s),
                     "motion_prompt": fields_only(motion_of(s)), "review": "pending"})
     with lock:
         if opening and out:
-            # Shot 1's still is the picture itself.
+            # Shot 1's still is the picture itself, and its prompt the picture's reading.
+            out[0]["still_prompt"] = opening_prompt or out[0]["still_prompt"]
             os.makedirs(media_dir(p["id"], out[0]["id"]), exist_ok=True)
             name = f"still-picture-{int(time.time())}.png"
             shutil.copyfile(os.path.join(project_dir(p["id"]), p["picture"]["file"]),
@@ -567,6 +601,34 @@ def write_shots(p, replace):
         log(p, f"{model} wrote {len(out)} shots")
         save(p)
     return bool(opening)
+
+
+FRAME_FIELDS = ("shot", "place_seen", "props", "light", "style")
+PERSON_FIELDS = ("visible", "body", "arms_hands", "legs", "head", "expression", "action", "touching")
+
+
+def sentence(text):
+    t = str(text or "").strip()
+    if t.lower().rstrip(".") in ("", "n/a", "none", "nobody", "out of frame", "same", "as before"):
+        return ""
+    t = t[0].upper() + t[1:]
+    return t if t[-1] in ".!?" else t + "."
+
+
+def frame_text(s):
+    """The shot's still prompt: its own text, or the frame and cast fields the model filled
+    in, joined in the order a picture is read (camera, place, each person, props, light)."""
+    frame = s.get("frame") if isinstance(s.get("frame"), dict) else {}
+    cast = [m for m in s.get("cast") or [] if isinstance(m, dict) and m.get("character")]
+    if not frame and not any(m.get(k) for m in cast for k in PERSON_FIELDS):
+        return str(s.get("still_prompt", ""))
+    parts = [sentence(frame.get(k)) for k in ("shot", "place_seen")]
+    for m in cast:
+        person = [f"{m['character']}" + (f" is {m['position']}" if m.get("position") else " is in the shot") + "."]
+        person += [sentence(m.get(k)) for k in PERSON_FIELDS]
+        parts.append(" ".join(x for x in person if x))
+    parts += [sentence(frame.get(k)) for k in ("props", "light", "style")]
+    return "\n\n".join(x for x in parts if x)
 
 
 H3_FIELDS = ("integrated_multimodal_description", "overall_soundscape", "non_diegetic_music")
@@ -671,7 +733,7 @@ def rewrite_prompt(p, s):
                 + (f"\nThe place: {place['look']}" if place else "") + looks
                 + f"\n\nCharacters in it: {names}\n"
                 f"Length: {s['seconds']} seconds\n\nDraft motion prompt:\n{draft or '(none: invent fitting motion and sound)'}")
-    text = llm(with_guide(REWRITE_PROMPT), user, p.get("llm") or LLM_MODEL)
+    text = llm(with_guide(own("REWRITE_PROMPT")), user, p.get("llm") or LLM_MODEL)
     at = text.find("integrated_multimodal_description:")
     if at < 0:
         raise RuntimeError("the answer wasn't an H3 prompt: " + text[:300])
