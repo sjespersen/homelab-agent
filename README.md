@@ -273,12 +273,18 @@ with page-locked memory: a tag that gets moved, or a bad release, runs on your G
 SwarmUI is built the same way, and installs ComfyUI and Python packages at runtime, unpinned;
 every ComfyUI custom node or SwarmUI extension you add runs code with access to its container
 (your images, the models and media disks). The Studio adds two community node packs
-(`stacks/ai/studio/comfy-nodes.txt`): pinned to a commit, read before pinning (no network
-calls, subprocesses or installs at runtime), put in place by `before-up.sh`. It also fetches
+(`comfy-nodes.txt` in [its repo](https://github.com/sjespersen/studio)): pinned to a commit, read
+before pinning (no network calls, subprocesses or installs at runtime), put in place by
+`before-up.sh` from the list in the pinned Studio image. The switcher and the Studio themselves
+are images from their own repos ([gpu-switcher](https://github.com/sjespersen/gpu-switcher),
+[studio](https://github.com/sjespersen/studio)), built by GitHub Actions from a version tag and
+pinned by digest here like every other image: whoever controls that GitHub account controls
+what the next update installs, but a pinned digest can't change underneath you. It also fetches
 MiniMax's H3 prompt guide, a text file that goes into Qwen's prompt: pinned to a commit and
 checked against its SHA-256, so a changed file is refused rather than fed to the model.
 *Reduce it:* update monthly; read the release notes for Hermes, n8n, Strata and SwarmUI before
-committing new pins or tags, and the diff before moving a node pack's pin; install only custom
+committing new pins or tags, the diff before moving a node pack's pin (or the Studio's,
+which carries the list); install only custom
 nodes and extensions from well-known authors.
 
 **8. Secrets at rest.** Ubuntu's default install has no disk encryption, so whoever takes the

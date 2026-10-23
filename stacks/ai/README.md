@@ -1,6 +1,7 @@
 # ai: local models on an NVIDIA GPU
 
-Three services that take turns on the GPU, and a page to switch between them:
+Three services that take turns on the GPU, and a page to switch between them
+([gpu-switcher](https://github.com/sjespersen/gpu-switcher), its own project):
 
 | Service | What | Engine | Needs |
 |---|---|---|---|
@@ -57,7 +58,7 @@ an amber one while switching. Below, two columns:
   cool-to-hot scale, power split into GPU, CPU and the rest. Then the case lighting.
 
 The total power is an estimate: GPU and CPU as measured, plus about 35 W for the board, RAM,
-SSDs, fans and power supply losses (`REST_WATTS` in `switcher/app.py`); only a smart plug
+SSDs, fans and power supply losses (`REST_WATTS` in [gpu-switcher](https://github.com/sjespersen/gpu-switcher)'s `app.py`); only a smart plug
 measures it exactly. The CPU's power comes from `homelab-cpu-power.service` (RAPL is readable
 by root only), which `root-setup.sh` installs: on a box set up before, rerun `./setup.sh`
 once. On a phone it's one column, the box's numbers right after the GPU.
@@ -170,106 +171,26 @@ models). SwarmUI fetches text encoders and VAEs itself on first use.
 
 ## Studio
 
-`http://<name>.local:8008`: from a brief to finished video shots, on this box.
+`http://<name>.local:8008` (`studio.<DOMAIN>`): from a brief to finished video shots, on this
+box. It's its own project, [studio](https://github.com/sjespersen/studio): see its README for
+the steps (shot list, Krea 2 stills, MiniMax H3 previews and finals, upscale, export for
+Resolve), timings, the models it needs and their licenses. Here it's set up like this:
 
-1. **Brief and characters.** Describe the film, and give each recurring person one clear photo
-   (showing the outfit, on a plain background: the photo's background leaks into the stills
-   otherwise). **Write shot list** has a chat model turn it into
-   shots: a still prompt (the first frame) and a motion-and-sound prompt per shot. Edit any of
-   it, or add shots by hand. Motion prompts follow H3's own format (`integrated_multimodal_description`,
-   `overall_soundscape`, `non_diegetic_music`; the Studio adds the first-frame line): the model gets
-   MiniMax's [H3 prompt-writing guide](https://github.com/MiniMax-AI/MiniMax-H3/tree/main/skills/h3-prompt-writing)
-   with the brief. **Rewrite for H3** on a shot (or **Rewrite prompts for H3** for all that
-   aren't in the format yet) turns a prompt you wrote in plain words into that format.
-   Each project picks its model under the brief, from the same list as Open WebUI: Qwen3.8-27B,
-   Flash-Next, and whatever you download into Ollama there (`AI_STUDIO_LLM` is the default for
-   new projects). Small Ollama models (8-14B) work but write weaker H3 prompts.
-   **Or start from a picture**: drop one under the brief (the page cuts it to the format, at the
-   final size) and say in the brief what should happen. A model that can see (one with vision
-   in Ollama, like Qwen3.8 or Gemma 3; pick it there) reads the place, each person's outfit,
-   position and box, and a prompt for the picture; the shot list starts with the picture as
-   shot 1's still, and the people become characters. Then Krea makes each person a full-body
-   reference photo on a plain background (the identity LoRA restages their crop in the outfit
-   read from the picture) and an image of each place, so one picture builds the whole project.
-   Rename "Person 1" and the prompts follow.
-   The model also writes the film's **places and outfits** once (the room, its furniture and
-   light; each garment and what isn't worn), and each shot names its place and, per person,
-   an outfit and where they stand in the frame. Edit them under **Places and outfits** and in a
-   shot's prompts.
-2. **Stills**: Krea 2 Turbo makes each shot's first frame at the final size. Each still is made
-   on its own, so the Studio adds the place's and the outfits' descriptions to every prompt:
-   that keeps the room and the clothes the same from shot to shot. With characters in the shot
-   it uses the [Krea 2 Identity Edit V2](https://huggingface.co/conradlocke/krea2-identity-edit)
-   LoRA with their photos, one pass per person, each with its own prompt. Krea doesn't know
-   names, so the Studio swaps them for positions: pass 1 has the first person's photo and
-   stages the whole scene ("the person from the photo is on the left", the others as stand-ins
-   at their places), and each later pass replaces one stand-in ("the person on the right")
-   with the person from the next photo. Click a still to see it at full size. Under the brief,
-   **LoRAs** adds Krea 2 LoRAs from SwarmUI's `Models/Lora` (the Studio reads their headers and
-   lists only Krea 2 ones), each with a strength, to the stills and place images; the character
-   photos stay without them, so the identity passes start from a neutral photo.
-3. **Previews**: MiniMax H3 animates the still at ~0.3 MP (736×416 for 16:9), with sound.
-   Under the brief, **Video LoRAs** adds MiniMax H3 LoRAs from SwarmUI's `Models/Lora` (the
-   Studio tells them from Krea 2 ones by their headers, else their key names: H3's attention
-   has a fused `qkv_proj`), each with a strength, after the turbo LoRA. A preview keeps the
-   LoRAs it was made with.
-4. **Review**: approve, retry (a new seed) or reject each preview; only approved ones go on.
-5. **Finals**: the approved preview again (same seed, frame, prompt and video LoRAs, so the same motion),
-   its latent upscaled by a learned H3 upscaler and refined at H3's full size (1344×768; H3
-   doesn't go past 768×1344). "Gentle" in the brief's settings keeps closer to the preview.
-6. **Upscale** to 1080p, set per project: **Clean** (the default: Lanczos only, ~20 s, nothing
-   invented, it looked best in a side-by-side test; finish in Resolve), **Soft**
-   (SeedVR2 3B with its chunks crossfaded, mixed half and half with a plain upscale), or
-   **SeedVR2** alone (the most detail, and invented skin texture that shifts between chunks). Clips over ~9 s are
-   upscaled in ~7.7 s pieces and joined, so RAM stays under ~45 GB (a 15 s clip in one go
-   needed over 60).
-7. **Export for Resolve**: a zip with the clips in order, `timeline.edl` (File > Import >
-   Timeline, then point it at the clips folder) and the prompts. Finish (4K, grade) in Resolve.
-
-Measured on the RTX 5060 Ti 16 GB with 64 GB RAM, for one 6.6-second 16:9 shot (once the models
-are loaded; switching the GPU between Qwen and SwarmUI adds under a minute):
-
-| Step | Time | Peak VRAM / RAM |
-|---|---|---|
-| Still (Krea 2 + identity LoRA) | ~50 s | — |
-| Preview (736×416) | 1½ min | 15.8 / 11 GB |
-| Final (1344×768) | 5½ min | 15.6 / 18 GB |
-| Upscale (1920×1080), Clean | ~20 s | — |
-| Upscale, Soft or SeedVR2 | 10 min | — / ~45 GB for long clips |
-| Rewrite for H3 (Strata) | ~1 min after a 44 s switch from SwarmUI | — / 55 GB |
-
-So a finished minute of film is roughly 1¼ hours of GPU time after you approve the previews
-(2½ with a SeedVR2 upscale).
-
-Jobs run one at a time, grouped by kind so models load less often. The Studio asks the switcher
-for the GPU (the chosen chat model for the shot list and rewrites, SwarmUI for the rest) and holds it while it works:
-switching on the Local AI page is off until the queue is empty or you press Stop.
-
-**Models** (in SwarmUI's `Models` folder; the page lists what's missing). Hugging Face's CDN
-stalls over IPv6 on some networks, so download with `curl -4 -L -C -`:
-
-| File | Folder | From |
-|---|---|---|
-| `krea2_turbo_fp8_scaled`, `qwen3vl_4b`, `QwenImage/qwen_image_vae` | `diffusion_models`, `text_encoders`, `VAE` | SwarmUI fetches the last two the first time you use Krea 2 in it; the first from [Comfy-Org/Krea-2](https://huggingface.co/Comfy-Org/Krea-2) |
-| `krea2_identity_edit_v2` | `Lora` | [conradlocke/krea2-identity-edit](https://huggingface.co/conradlocke/krea2-identity-edit) |
-| `minimax_h3_fl2va_pruned_w6a8`, `qwen3vl_32b_minimax_h3_nvfp4_awq`, `minimax_h3_video_vae_int8_convrot`, `minimax_h3_audio_vae_fp32`, `minimax_h3_fl2v_turbo_4step_v1.0_768p_comfyui_bf16` | `diffusion_models`, `text_encoders`, `VAE`, `VAE`, `Lora` | [Comfy-Org/MiniMax-H3](https://huggingface.co/Comfy-Org/MiniMax-H3) |
-| `minimax_h3_latent_upscaler_3d_conv_v1_bf16` | `latent_upscale_models` | [LBH-123-AI/Minimax_h3_latent_Upscaler](https://huggingface.co/LBH-123-AI/Minimax_h3_latent_Upscaler) |
-| `seedvr2_3b_int8_convrot`, `seedvr2_ema_vae_fp16` | `diffusion_models`, `VAE` | [Comfy-Org/SeedVR2](https://huggingface.co/Comfy-Org/SeedVR2) |
-
-Two ComfyUI node packs come with it, pinned in `studio/comfy-nodes.txt` (deploys put them in
-place): [comfyui-krea2edit](https://github.com/lbouaraba/comfyui-krea2edit) for the identity
-LoRA, and [the H3 latent upscaler](https://github.com/xmarre/Comfyui_Minimax_h3_latent_Upscaler-Plus). Deploys also fetch MiniMax's
-prompt guide (`references/base-en.txt`, pinned to a commit and checked by hash) into
-`data/studio/`; without it, Qwen still writes the format from a short summary.
-
-**Your own instructions.** The Studio's instructions to the models (`SHOT_PROMPT`,
-`REWRITE_PROMPT`, `MOTION_FORMAT`, `PICTURE_PROMPT` in `studio/app.py`) are defaults. A file
-`data/studio/prompts/<NAME>.txt` replaces one, read on each use, so your own versions stay on
-the box (and in the backup), out of git.
-
-**Licenses.** MiniMax H3's license excludes the US, UK, EU and South Korea unless MiniMax
-authorizes you (apply on their H3 license page; keep their email). The identity LoRA is free
-for personal, non-commercial use only. The H3 upscaler's repository and MiniMax's H3 repository (the prompt guide) have no license; that's why the guide is fetched, not kept here.
+- It asks the switcher for the GPU (the chosen chat model for the shot list and rewrites,
+  SwarmUI for the rest) and holds it while it works: switching on the Local AI page is off
+  until its queue is empty or you press Stop. Switching between Qwen and SwarmUI adds under a
+  minute per job kind.
+- Its chat models are the switcher's (Qwen3.8-27B, Flash-Next) and whatever you download into
+  Ollama in Open WebUI; `AI_STUDIO_LLM` is the default for new projects.
+- **Models** go into SwarmUI's `Models` folder (`AI_MODELS_DIR/swarm/Models`); the page lists
+  what's missing. Hugging Face's CDN stalls over IPv6 on some networks: `curl -4 -L -C -`.
+- Deploys put its two ComfyUI node packs into SwarmUI's ComfyUI, at the commits the pinned
+  Studio image lists, and fetch MiniMax's H3 prompt guide into `data/studio/` (pinned, checked
+  by hash).
+- Projects live in `data/studio` (backed up), renders in `AI_MEDIA_DIR/studio` (not backed up).
+- **Your own instructions**: a file `data/studio/prompts/<NAME>.txt` replaces one of its
+  default instructions to the models (`SHOT_PROMPT`, `REWRITE_PROMPT`, `MOTION_FORMAT`,
+  `PICTURE_PROMPT`), so your own versions stay on the box (and in the backup), out of git.
 
 ## Use the chat models
 
@@ -331,7 +252,8 @@ curl http://<name>.local:8005/v1/chat/completions -H "Authorization: Bearer $key
 
 ## Updates
 
-The llama.cpp, Python and proxy images are pinned like every other image (`./deploy.sh
---update`). Strata and SwarmUI are built from the git tags in `compose.yaml`: change the tag
+The llama.cpp, switcher, Studio and proxy images are pinned like every other image
+(`./deploy.sh --update`). The switcher and the Studio come from their own repos: a new version
+there is a tag, and `--update` moves the pin to it. Strata and SwarmUI are built from the git tags in `compose.yaml`: change the tag
 (and the `image:` name next to it) and deploy. SwarmUI also updates ComfyUI and extensions
 from its own UI; those live on the models disk.

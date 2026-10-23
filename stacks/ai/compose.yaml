@@ -300,15 +300,11 @@ services:
 
   # The page at port 8005: which service runs, GPU memory, buttons to switch. Login: the API key.
   # Also the chat API (/v1): it starts the model a request names and stops an idle one.
+  # https://github.com/sjespersen/gpu-switcher
   switcher:
-    image: python:3.13-slim@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f  # 3.13.16
+    image: ghcr.io/sjespersen/gpu-switcher:latest@sha256:b2e751e43a4695f2c8aa8d20c024fc24f2e7a893bdd56739b1da91c5423f974b  # 0.1.0
     container_name: ai-switcher
-    labels:
-      # A hash of the mounted code (before-up.sh): when it changes, compose recreates the
-      # container, so a deploy restarts the switcher with the new code.
-      homelab.switcher.code: "${SWITCHER_CODE:-}"
     user: "${PUID}:${PGID}"
-    command: ["python", "/app/app.py"]
     env_file:
       - path: ./data/.env   # API_KEY
         required: false
@@ -325,7 +321,6 @@ services:
     ports:
       - "127.0.0.1:8079:8079"
     volumes:
-      - ./switcher:/app:ro
       - ./data/switcher:/state
       # Read-only, to drop a stopped service's model files from the page cache (drop_cache).
       - ${AI_MODELS_DIR}:/models:ro
@@ -347,13 +342,11 @@ services:
   # The Studio: brief -> shot list (Qwen) -> stills (Krea 2) -> previews and finals (MiniMax H3)
   # -> upscale (SeedVR2) -> export for Resolve, on SwarmUI's ComfyUI. No GPU of its own: it asks
   # the switcher for it. Projects in data/studio (backed up), renders on the media disk.
+  # https://github.com/sjespersen/studio
   studio:
-    image: python:3.13-slim@sha256:70729b46c69b4f1e97c4822c1af3df53a1476cf5ddc6c087c0c10bc3a5678c2f  # 3.13.16
+    image: ghcr.io/sjespersen/studio:latest@sha256:0fe375e43554f0b26ca311d6b5e163851485213c7ec8c1d3a737d9306b1a9960  # 0.1.0
     container_name: ai-studio
-    labels:
-      homelab.studio.code: "${STUDIO_CODE:-}"   # like the switcher's: a deploy restarts it on new code
     user: "${PUID}:${PGID}"
-    command: ["python", "/app/app.py"]
     env_file:
       - path: ./data/.env   # API_KEY: the switcher's API and its login cookie
         required: false
@@ -365,7 +358,6 @@ services:
     ports:
       - "127.0.0.1:8078:8078"
     volumes:
-      - ./studio:/app:ro
       - ./data/studio:/data
       - ${AI_MEDIA_DIR}/studio:/media
       - ${AI_MODELS_DIR}/swarm/Models:/models:ro   # only to see which models are there

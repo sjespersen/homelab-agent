@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Renders config.example.env with several MODULES combinations and checks that every compose
 # file parses and (when Docker is running) that Caddy accepts its config. Also checks that
-# every image is pinned by digest, and that the AI switcher's and Studio's page scripts parse.
+# every image is pinned by digest. (The AI switcher and the Studio have their own repos and checks.)
 # CI runs this.
 set -euo pipefail
 repo="$(cd "$(dirname "$0")/.." && pwd)"
@@ -14,27 +14,6 @@ if grep -n '^ *image:' "$repo"/stacks/*/compose.yaml | grep -v '@sha256:[0-9a-f]
   | grep -v 'image: *local/'; then
   echo "The images above aren't pinned by digest; run ./update-images.sh." >&2
   exit 1
-fi
-
-# The switcher's pages are JavaScript inside a Python file: check that their scripts parse.
-if docker info >/dev/null 2>&1; then
-  API_KEY=x python3 -B - "$repo/stacks/ai/switcher/app.py" "$tmp" <<'PY'
-import importlib.util, re, sys
-spec = importlib.util.spec_from_file_location("app", sys.argv[1])
-app = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(app)
-for name in ("PAGE", "LOGIN"):
-    with open(f"{sys.argv[2]}/{name}.js", "w") as f:
-        f.write("\n".join(re.findall(r"<script>(.*?)</script>", getattr(app, name), re.S)))
-PY
-  for page in PAGE LOGIN; do
-    docker run --rm -v "$tmp:/s:ro" node:22-alpine node --check "/s/$page.js" \
-      || { echo "The switcher's $page script doesn't parse." >&2; exit 1; }
-  done
-  python3 -c 'import re, sys; print(re.findall(r"<script>(.*?)</script>", open(sys.argv[1]).read(), re.S)[0])' \
-    "$repo/stacks/ai/studio/page.html" >"$tmp/studio.js"
-  docker run --rm -v "$tmp:/s:ro" node:22-alpine node --check /s/studio.js \
-    || { echo "The Studio page's script doesn't parse." >&2; exit 1; }
 fi
 
 combos=(

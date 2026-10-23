@@ -31,10 +31,15 @@ for sub in llama.cpp strata ollama swarm/Models swarm/dlbackend swarm/DLNodes sw
   }
 done
 
-# The Studio's ComfyUI node packs (studio/comfy-nodes.txt), at their pinned commits. ComfyUI
+# The Studio's ComfyUI node packs, at the commits its image pins (comfy-nodes.txt in it). ComfyUI
 # exists once SwarmUI's installer ran; until then there's nothing to put them in.
 nodes=$models/swarm/dlbackend/ComfyUI/custom_nodes
 if [[ -d $nodes ]]; then
+  studio_image=$(docker compose config --images studio)
+  node_list=$(docker run --rm --entrypoint cat "$studio_image" /app/comfy-nodes.txt) || {
+    echo "Can't read the node packs from $studio_image" >&2
+    exit 1
+  }
   while read -r name repo commit; do
     [[ -n $name && $name != \#* ]] || continue
     [[ $(git -C "$nodes/$name" rev-parse HEAD 2>/dev/null) != "$commit" ]] || continue
@@ -42,7 +47,7 @@ if [[ -d $nodes ]]; then
     [[ -d $nodes/$name/.git ]] || git clone -q "$repo" "$nodes/$name"
     git -C "$nodes/$name" fetch -q origin "$commit"
     git -C "$nodes/$name" -c advice.detachedHead=false checkout -q "$commit"
-  done <studio/comfy-nodes.txt
+  done <<<"$node_list"
 fi
 
 # MiniMax's H3 prompt-writing guide, which the Studio gives Qwen when it writes motion prompts.
@@ -63,18 +68,6 @@ fi
 # Open WebUI reaches the 27B and Strata through the switcher, with the API key.
 key=$(sed -n 's/^API_KEY=//p' data/.env)
 (umask 077; printf 'OPENAI_API_KEYS=%s\n' "$key" >data/webchat.env)
-
-# The switcher's code is mounted, not part of its image: a hash of it in .env (a label in
-# compose.yaml) makes compose recreate the container when the code changed.
-for app in switcher studio; do
-  var=$(tr '[:lower:]' '[:upper:]' <<<"$app")_CODE
-  code=$(find "$app" -maxdepth 1 -type f | sort | xargs cat | sha256sum | cut -c1-16)
-  if grep -q "^$var=" .env; then
-    sed -i "s/^$var=.*/$var=\"$code\"/" .env
-  else
-    echo "$var=\"$code\"" >>.env
-  fi
-done
 
 # Which service gets the GPU: the last one picked in the switcher (or ./ai-model.sh), else
 # AI_MODEL from the config; "none" after Stop. compose up starts only that one
