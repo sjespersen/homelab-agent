@@ -5,6 +5,9 @@ through a proxy that allows listing, starting and stopping containers and nothin
 The services are the containers labelled homelab.ai.title (see compose.yaml). Login is the
 AI API key; Caddy also asks /_ai/auth before letting anyone into SwarmUI.
 
+Without Docker (SERVICES_FILE set, e.g. on a Mac), the services are commands listed in that
+JSON file, and the switcher starts and stops them itself (see process_services).
+
 The chat API (/v1) goes through here too: a request naming the other chat model's name
 (homelab.ai.model) switches to it first, and after IDLE_MINUTES without requests or GPU load
 the chat model is stopped; the next request starts it again.
@@ -18,6 +21,7 @@ import json
 import os
 import re
 import shlex
+import signal
 import subprocess
 import threading
 import time
@@ -27,7 +31,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 API_KEY = os.environ["API_KEY"]
 DOCKER = os.environ.get("DOCKER_PROXY", "socket-proxy:2375")
+# The services as commands to run, in place of Docker containers (see process_services).
+SERVICES_FILE = os.environ.get("SERVICES_FILE", "")
 STATE = os.environ.get("STATE_FILE", "/state/active")
+# Where the page and the API listen: all interfaces in a container, 127.0.0.1 on your own computer.
+LISTEN = os.environ.get("LISTEN", "0.0.0.0")
+PORT = int(os.environ.get("PORT", "8079"))
 # The LED switch (AI_LEDS=yes): this only writes "on"/"off"; a root service on the host applies
 # it with OpenRGB and writes leds.status (stacks/ai/host/homelab-leds.sh).
 LEDS = os.environ.get("LEDS") == "yes"
@@ -36,7 +45,9 @@ LEDS_STATUS = LEDS_FILE + ".status"
 # White unless a color is picked: "on" with a color effect (Static, Breathing ...) and no color
 # would keep the board's last one, which after "off" is black.
 # Suspend, restart, shut down: also only written to a file, for a root service on the host
-# (stacks/ai/host/homelab-power.sh), which accepts nothing but these three words.
+# (stacks/ai/host/homelab-power.sh), which accepts nothing but these three words. Only with
+# POWER=yes: without that service nothing would act on them.
+POWER = os.environ.get("POWER") == "yes"
 POWER_FILE = os.path.join(os.path.dirname(STATE), "power")
 POWER_ACTIONS = ("suspend", "reboot", "poweroff")
 # The chat model last given the GPU, for API requests that name no model while none runs
@@ -58,7 +69,8 @@ API_PORT = 8080
 # Ollama runs all the time (homelab.ai.always-on): it only takes the GPU while it has a model
 # loaded. Open WebUI reaches it through /ollama here; requests that run a model give it the
 # GPU first (stopping the 27B or Strata), and switching to another service unloads its models.
-OLLAMA_HOST, OLLAMA_PORT = "ollama", 11434
+_ollama = urllib.parse.urlsplit(os.environ.get("OLLAMA_URL", "http://ollama:11434"))
+OLLAMA_HOST, OLLAMA_PORT = _ollama.hostname, _ollama.port or 11434
 OLLAMA_GPU_PATHS = {"/api/chat", "/api/generate", "/api/embed", "/api/embeddings",
                     "/v1/chat/completions", "/v1/completions", "/v1/embeddings", "/v1/responses"}
 # Stop the chat model after this many minutes without API requests or GPU load; 0: never.
@@ -94,7 +106,26 @@ def docker(method, path):
 
 
 def services():
-    """The GPU services, in the order compose.yaml lists them (homelab.ai.order)."""
+    """The GPU services, in their order (homelab.ai.order, or the order in SERVICES_FILE)."""
+    return process_services() if SERVICES_FILE else docker_services()
+
+
+def start_service(s):
+    if SERVICES_FILE:
+        process_start(s)
+    else:
+        docker("POST", f"/containers/{s['container']}/start")
+
+
+def stop_service(s):
+    if SERVICES_FILE:
+        process_stop(s)
+    else:
+        # Strata needs up to a minute to release its page-locked RAM.
+        docker("POST", f"/containers/{s['container']}/stop?t=60")
+
+
+def docker_services():
     flt = urllib.parse.quote(json.dumps({"label": ["homelab.ai.title"]}))
     found = []
     for c in docker("GET", f"/containers/json?all=1&filters={flt}"):
@@ -118,8 +149,100 @@ def services():
             "started": detail["State"].get("StartedAt"),
             # Its model files, under MODELS_DIR: dropped from the page cache when another one starts.
             "files": labels.get("homelab.ai.files", ""),
+            # Where its API answers: the compose service's name in the stack's network.
+            "host": labels["com.docker.compose.service"],
+            "port": int(labels.get("homelab.ai.port", API_PORT)),
         })
     return sorted(found, key=lambda s: s["order"])
+
+
+# The process backend: SERVICES_FILE is {"services": [...]}, each entry with
+#   id, title, about, kind (chat/image), models (API names), site, files, always_on: as the labels
+#   command: what to run, as a list (e.g. ["llama-server", "-m", "...gguf", "--port", "8080"])
+#   cwd, env: optional; port: where its API answers on 127.0.0.1 (host to change that)
+#   health: a path that answers 200 once it's ready (e.g. /health); without one, an open port
+# The switcher's own children: they stop with it, and a restart of the switcher finds nothing
+# running (STATE then says what ran; the next request or switch starts it again).
+procs = {}
+proc_started = {}
+
+
+def process_services():
+    with open(SERVICES_FILE) as f:
+        conf = json.load(f)
+    found = []
+    for i, e in enumerate(conf.get("services", [])):
+        sid = e["id"]
+        p = procs.get(sid)
+        running = p is not None and p.poll() is None
+        host, port = e.get("host", "127.0.0.1"), int(e.get("port", API_PORT))
+        found.append({
+            "id": sid,
+            "title": e.get("title", sid),
+            "about": e.get("about", ""),
+            "kind": e.get("kind", "chat"),
+            "site": e.get("site", ""),
+            "models": [m.strip().lower() for m in e.get("models", []) if m.strip()],
+            "order": int(e.get("order", i + 1)),
+            "always_on": bool(e.get("always_on")),
+            "state": "running" if running else ("exited" if p is not None else "created"),
+            "health": answers(host, port, e.get("health")) if running else None,
+            "started": proc_started.get(sid),
+            "files": e.get("files", ""),
+            "host": host,
+            "port": port,
+            "_entry": e,
+        })
+    return sorted(found, key=lambda s: s["order"])
+
+
+def answers(host, port, path):
+    """Docker's health words for a process: healthy once it answers, starting until then."""
+    try:
+        conn = http.client.HTTPConnection(host, port, timeout=2)
+        try:
+            if path:
+                conn.request("GET", path)
+                ok = conn.getresponse().status == 200
+            else:
+                conn.connect()
+                ok = True
+        finally:
+            conn.close()
+    except OSError:
+        ok = False
+    return "healthy" if ok else "starting"
+
+
+def process_start(s):
+    e = s["_entry"]
+    log = open(os.path.join(os.path.dirname(STATE), f"{s['id']}.log"), "ab")
+    procs[s["id"]] = subprocess.Popen(
+        [os.path.expanduser(a) for a in e["command"]], cwd=os.path.expanduser(e.get("cwd") or "~"),
+        env={**os.environ, **{k: str(v) for k, v in e.get("env", {}).items()}},
+        stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT,
+        start_new_session=True)  # its own process group, so stopping it also stops its children
+    log.close()
+    proc_started[s["id"]] = datetime.now(timezone.utc).isoformat()
+
+
+def process_stop(s, timeout=60):
+    p = procs.get(s["id"])
+    if p is None or p.poll() is not None:
+        return
+    os.killpg(p.pid, signal.SIGTERM)
+    try:
+        p.wait(timeout)
+    except subprocess.TimeoutExpired:
+        os.killpg(p.pid, signal.SIGKILL)
+        p.wait()
+
+
+def stop_all_processes(*_):
+    for sid, p in list(procs.items()):
+        if p.poll() is None:
+            process_stop({"id": sid}, timeout=20)
+    raise SystemExit(0)
 
 
 def gpu():
@@ -308,15 +431,14 @@ def switch(target):
                 if s["state"] == "running":
                     ollama_unload()
             elif s["state"] in ("running", "restarting"):
-                # Strata needs up to a minute to release its page-locked RAM.
-                docker("POST", f"/containers/{s['container']}/stop?t=60")
+                stop_service(s)
         if target != "none":
             for s in all_services:
                 if s["id"] != target and not s["always_on"] and s["files"]:
                     drop_cache(s["files"])
         for s in all_services:
             if (s["id"] == target or s["always_on"]) and s["state"] != "running":
-                docker("POST", f"/containers/{s['container']}/start")
+                start_service(s)
         with open(STATE, "w") as f:
             f.write(target + "\n")
         if any(s["id"] == target and s["models"] for s in all_services):
@@ -442,7 +564,9 @@ def ensure_running(target):
         s = svcs[target]
         if s["state"] == "running" and s["health"] in ("healthy", None):
             return None
-        if s["state"] != "running":
+        if s["state"] != "running" and switching["to"] == target:
+            pass  # the page is switching to it already (the image service may not have stopped yet)
+        elif s["state"] != "running":
             image = [o for o in svcs.values() if o["kind"] == "image" and o["state"] == "running"]
             if image:
                 return f"{image[0]['title']} has the GPU; switch on the Local AI page"
@@ -580,7 +704,7 @@ class Handler(BaseHTTPRequestHandler):
             with api:
                 inflight[target["id"]] = inflight.get(target["id"], 0) + 1
             try:
-                self.proxy(target["id"], API_PORT, self.path, body)
+                self.proxy(target["host"], target["port"], self.path, body)
             finally:
                 with api:
                     inflight[target["id"]] -= 1
@@ -710,6 +834,7 @@ class Handler(BaseHTTPRequestHandler):
                     except (OSError, ValueError):
                         s["installed"] = None
             for s in svcs:
+                s.pop("_entry", None)  # the command and its env stay on the box
                 # When the idle watcher stops it (for the page's countdown), if nothing comes first.
                 if IDLE_MINUTES > 0 and s["models"] and s["state"] == "running":
                     s["idle_stop_at"] = max(activity["last"], started_at(s)) + IDLE_MINUTES * 60
@@ -719,7 +844,7 @@ class Handler(BaseHTTPRequestHandler):
                 total = g["power"] + c["power"] + REST_WATTS
             return self.json({"services": svcs, "gpu": g, "cpu": c, "ram": ram(), "disks": disks(), "total_power": total,
                               "rest_watts": REST_WATTS, "switching": switching["to"],
-                              "error": switching["error"], "leds": leds(),
+                              "error": switching["error"], "leds": leds(), "power": POWER,
                               "idle_minutes": IDLE_MINUTES, "idle_stop": activity["idle_stop"],
                               "requests": activity["waiting"], "now": time.time(),
                               "hold": hold["by"] if time.time() < hold["until"] else None})
@@ -792,6 +917,8 @@ class Handler(BaseHTTPRequestHandler):
                 f.write("".join(f"{k}={settings[k]}\n" for k in ("state", "effect", "speed", "color")))
             return self.json({"leds": settings}, 202)
         if url.path == "/_ai/api/power":
+            if not POWER:
+                return self.json({"error": "the power buttons are off (POWER)"}, 404)
             try:
                 action = json.loads(raw or "{}").get("action")
             except (ValueError, AttributeError):
@@ -826,205 +953,6 @@ class Handler(BaseHTTPRequestHandler):
         self.send(404, "not found")
 
 
-STYLE = """
-:root { --bg:#f4f4f1; --card:#fff; --ink:#1c1c1a; --muted:#6b6b64; --faint:#9a9a92; --line:#e4e4de;
-  --soft:#efefea; --accent:#2f6f4f; --accent-soft:#e3efe8; --warn:#a36f00; --warn-soft:#f7ecd2;
-  --bad:#b03a3a; --bad-soft:#f6e1e1; --on-accent:#fff;
-  --chat:#2f6f4f; --chat-soft:#e3efe8; --web:#2f62a3; --web-soft:#e2eaf6; --image:#7b4bb0; --image-soft:#eee5f7;
-  --cpu:#2f62a3; --rest:#c9c9c1; --orange:#b8621b; --red:#b33f4a; --pink:#b0407e; --teal:#1d7f80; color-scheme: light; }
-@media (prefers-color-scheme: dark) { :root { --bg:#121211; --card:#1b1b19; --ink:#ecece7; --muted:#a0a098;
-  --faint:#77776f; --line:#2e2e2a; --soft:#262623; --accent:#72c296; --accent-soft:#1d3127; --warn:#e3b350;
-  --warn-soft:#3a2f17; --bad:#e57b7b; --bad-soft:#3b2020; --on-accent:#0f2419;
-  --chat:#72c296; --chat-soft:#1d3127; --web:#7fa9e6; --web-soft:#1c2a3e; --image:#bd96ea; --image-soft:#2d2240;
-  --cpu:#7fa9e6; --rest:#4a4a44; --orange:#eb9a55; --red:#ec7f88; --pink:#e886bf; --teal:#5cc4c4; color-scheme: dark; } }
-* { box-sizing: border-box; }
-body { margin:0; background:var(--bg); color:var(--ink); font:14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
-main { max-width: 1100px; margin: 0 auto; padding: 14px 16px 28px; }
-a { color: inherit; }
-h1 { font-size: 18px; margin: 0; letter-spacing: -.01em; line-height: 1.2; }
-h2 { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); margin: 0; }
-small { font-size: .62em; font-weight: 500; color: var(--muted); }
-.sub { color: var(--muted); font-size: 12px; margin: 1px 0 0; }
-.hint { color: var(--faint); font-size: 12px; }
-.ic { width:18px; height:18px; fill:none; stroke:currentColor; stroke-width:1.8; stroke-linecap:round; stroke-linejoin:round; flex-shrink:0; }
-.top { display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap; margin-bottom: 12px; }
-.top-right { display:flex; align-items:center; gap:12px; }
-.brand { display:flex; align-items:center; gap:10px; }
-.logo { width:32px; height:32px; border-radius:9px; background:#2f6f4f; display:grid; place-items:center; flex-shrink:0; }
-.logo svg { width:26px; height:26px; }
-.live { display:inline-flex; align-items:center; gap:6px; font-size:12px; color:var(--muted); }
-.live i { width:7px; height:7px; border-radius:50%; background:var(--accent); }
-.live.blink i { animation: blink .6s ease-out; }
-.live.off { color:var(--bad); } .live.off i { background:var(--bad); }
-@keyframes blink { from { box-shadow: 0 0 0 4px var(--accent-soft); } to { box-shadow: 0 0 0 0 transparent; } }
-.card { background:var(--card); border:1px solid var(--line); border-radius:12px; padding:12px 14px; }
-.card-head { display:flex; justify-content:space-between; align-items:baseline; gap:10px; flex-wrap:wrap; margin-bottom: 10px; }
-.cols { display:grid; gap:12px; grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); align-items:start; }
-.col { display:grid; gap:12px; min-width:0; }
-/* One column on a phone, the box's numbers right after the GPU */
-@media (max-width: 880px) { .cols { display:flex; flex-direction:column; align-items:stretch; } .col { display:contents; }
-  .cols [data-o="2"] { order:2; } .cols [data-o="3"] { order:3; } .cols [data-o="4"] { order:4; }
-  .cols [data-o="5"] { order:5; } .cols [data-o="6"] { order:6; } }
-
-/* What has the GPU now */
-.now { display:flex; gap:14px; align-items:center; padding:14px; border-radius:11px; margin-bottom:12px;
-  background:var(--soft); border:1px solid transparent; }
-.now.k-chat { background:var(--chat-soft); border-color:color-mix(in srgb, var(--chat) 35%, transparent); }
-.now.k-web { background:var(--web-soft); border-color:color-mix(in srgb, var(--web) 35%, transparent); }
-.now.k-image { background:var(--image-soft); border-color:color-mix(in srgb, var(--image) 35%, transparent); }
-.now.free { background:transparent; border:1px dashed var(--line); }
-.now-icon { width:46px; height:46px; border-radius:12px; display:grid; place-items:center; flex-shrink:0;
-  background:var(--card); color:var(--muted); }
-.now-icon .ic { width:24px; height:24px; }
-.k-chat .now-icon, .k-chat .kicon { color:var(--chat); } .k-web .now-icon, .k-web .kicon { color:var(--web); }
-.k-image .now-icon, .k-image .kicon { color:var(--image); }
-.now.switching .now-icon { animation: breathe 1.6s ease-in-out infinite; }
-@keyframes breathe { 50% { opacity:.55; } }
-@keyframes spin { to { transform: rotate(360deg); } }
-.now-main { flex:1; min-width:0; }
-.now-state { display:flex; align-items:center; gap:6px; font-size:12px; font-weight:600; color:var(--muted); }
-.now-state.on { color:var(--accent); } .now-state.busy { color:var(--warn); } .now-state.bad { color:var(--bad); }
-.dot { width:8px; height:8px; border-radius:50%; background:currentColor; flex-shrink:0; }
-.dot.pulse { animation: pulse 1.6s ease-in-out infinite; }
-@keyframes pulse { 0%,100% { box-shadow:0 0 0 0 color-mix(in srgb, currentColor 45%, transparent); }
-  50% { box-shadow:0 0 0 5px transparent; } }
-.now-title { font-size:21px; font-weight:650; letter-spacing:-.015em; line-height:1.25; margin:1px 0 3px; }
-.now-meta { display:flex; flex-wrap:wrap; align-items:center; gap:4px 12px; font-size:12px; color:var(--muted); }
-.now-meta b { font-weight:600; color:var(--ink); font-variant-numeric: tabular-nums; }
-.now-actions { display:flex; gap:6px; flex-wrap:wrap; flex-shrink:0; }
-.timer { font-size:22px; font-weight:600; font-variant-numeric: tabular-nums; color:var(--warn); }
-.steps { list-style:none; margin:8px 0 0; padding:0; display:flex; flex-wrap:wrap; gap:4px 18px; font-size:12px; }
-.steps li { display:flex; align-items:center; gap:6px; color:var(--faint); }
-.steps li::before { content:""; width:14px; height:14px; border-radius:50%; border:1.5px solid currentColor; box-sizing:border-box; }
-.steps li.done { color:var(--accent); } .steps li.done::before { background:currentColor; box-shadow: inset 0 0 0 3px var(--card); }
-.steps li.doing { color:var(--warn); font-weight:600; }
-.steps li.doing::before { border-top-color:transparent; animation: spin .9s linear infinite; }
-
-.held-note { background:var(--warn-soft); color:var(--warn); border-radius:9px; padding:7px 11px; margin-bottom:10px; font-size:12px; font-weight:600; }
-.held .now button, .held .choice button { opacity:.45; pointer-events:none; }
-
-/* The choices */
-.choices { display:grid; gap:8px; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); }
-.choice { display:flex; flex-direction:column; gap:4px; padding:11px 12px; border:1px solid var(--line);
-  border-radius:10px; min-width:0; transition: border-color .15s, transform .15s; }
-.choice:hover { border-color:var(--faint); }
-.choice.active { border-color:var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
-.choice.target { border-color:var(--warn); box-shadow: 0 0 0 1px var(--warn) inset; }
-.choice-top { display:flex; align-items:center; gap:8px; }
-.kicon { width:28px; height:28px; border-radius:8px; display:grid; place-items:center; flex-shrink:0; }
-.k-chat .kicon { background:var(--chat-soft); } .k-web .kicon { background:var(--web-soft); } .k-image .kicon { background:var(--image-soft); }
-.kicon .ic { width:16px; height:16px; }
-.choice-title { font-weight:620; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.tag { font-size:10.5px; font-weight:600; text-transform:uppercase; letter-spacing:.05em; color:var(--faint); }
-.choice-about { color:var(--muted); font-size:12px; flex:1; }
-.choice-foot { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-top:4px; min-height:28px; }
-.chips { display:flex; flex-wrap:wrap; gap:4px; }
-.chip { font-size:11px; padding:1px 7px; border-radius:999px; background:var(--soft); color:var(--muted);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; max-width:100%; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.chip.plain { font-family: inherit; }
-.pill { display:inline-flex; align-items:center; gap:5px; font-size:11px; font-weight:500; padding:1px 8px;
-  border-radius:999px; white-space:nowrap; background:var(--soft); color:var(--muted); }
-.pill::before { content:""; width:6px; height:6px; border-radius:50%; background:currentColor; }
-.pill.on { background:var(--accent-soft); color:var(--accent); }
-.pill.busy { background:var(--warn-soft); color:var(--warn); }
-.pill.bad { background:var(--bad-soft); color:var(--bad); }
-.pill.off::before { background:transparent; border:1.5px solid currentColor; box-sizing:border-box; }
-
-/* The box's vitals: one look per kind of number (capacity bar, load history, temperature scale, watts) */
-.vsec { padding:10px 0; border-top:1px solid var(--line); }
-.vsec:first-child { padding-top:0; border-top:0; }
-.vsec:last-child { padding-bottom:0; }
-.vhead { display:flex; align-items:center; gap:7px; margin-bottom:7px; }
-.vhead .ic { color:var(--muted); width:16px; height:16px; }
-.vname { font-weight:620; font-size:13px; }
-.vsub { color:var(--faint); font-size:12px; margin-left:auto; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.vgrid { display:grid; grid-template-columns: 1fr 1fr; gap:10px 16px; }
-.m { min-width:0; }
-.m.wide { grid-column: 1 / -1; }
-.m-top { display:flex; justify-content:space-between; align-items:baseline; gap:8px; }
-.m-label { font-size:11px; color:var(--muted); }
-.m-val { font-size:17px; font-weight:620; font-variant-numeric: tabular-nums; line-height:1.25; white-space:nowrap; }
-.m.big .m-val { font-size:24px; }
-.m-note { font-size:11px; color:var(--faint); margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-.m.warn .m-val, .m.warn .m-note { color:var(--warn); } .m.bad .m-val, .m.bad .m-note { color:var(--bad); }
-.cells { display:grid; grid-auto-flow:column; grid-auto-columns:1fr; gap:2px; margin-top:5px; }
-.cells i { height:12px; background:var(--soft); border-radius:2px; overflow:hidden; }
-.cells b { display:block; height:100%; background:var(--accent); }
-.bar { height:8px; background:var(--soft); border-radius:4px; overflow:hidden; margin-top:5px; display:flex; }
-.bar > i { display:block; height:100%; background:var(--accent); transition: width .5s; }
-.m.warn .bar > i { background:var(--warn); } .m.bad .bar > i { background:var(--bad); }
-.bar .p-gpu { background:var(--accent); } .bar .p-cpu { background:var(--cpu); } .bar .p-rest { background:var(--rest); }
-.bar > i + i { border-left:2px solid var(--card); }
-.legend { display:flex; gap:12px; flex-wrap:wrap; font-size:11px; color:var(--muted); margin-top:5px; }
-.legend span { display:inline-flex; align-items:center; gap:5px; }
-.legend span::before { content:""; width:8px; height:8px; border-radius:2px; background:var(--c); }
-.legend b { color:var(--ink); font-weight:600; font-variant-numeric: tabular-nums; }
-.spark { display:block; width:100%; height:26px; margin-top:4px; overflow:visible; }
-.spark polyline { fill:none; stroke:var(--accent); stroke-width:1.5; vector-effect:non-scaling-stroke; stroke-linejoin:round; }
-.spark line { stroke:var(--line); stroke-width:1; vector-effect:non-scaling-stroke; }
-.spark polygon { fill:color-mix(in srgb, var(--accent) 16%, transparent); stroke:none; }
-.spark.cpu polyline { stroke:var(--cpu); } .spark.cpu polygon { fill:color-mix(in srgb, var(--cpu) 16%, transparent); }
-.scale { position:relative; height:6px; border-radius:3px; margin:15px 0 3px;
-  background: linear-gradient(90deg, #4f9e72 0%, #8fbf5a 45%, #e3b350 70%, #e07a3f 82%, #d04545 100%); opacity:.9; }
-.scale i { position:absolute; top:-5px; width:3px; height:16px; margin-left:-1.5px; border-radius:2px;
-  background:var(--ink); box-shadow: 0 0 0 2px var(--card); transition: left .5s; }
-
-/* Other cards */
-button, .btn { font:inherit; font-size:13px; padding:5px 11px; border-radius:7px; border:1px solid var(--line);
-  background:var(--card); color:var(--ink); cursor:pointer; text-decoration:none; display:inline-flex;
-  align-items:center; gap:6px; white-space:nowrap; }
-button:hover:not(:disabled), .btn:hover { border-color: var(--faint); }
-button.primary { background:var(--accent); border-color:var(--accent); color:var(--on-accent); font-weight:500; }
-button.small { font-size:12px; padding:3px 9px; }
-button:disabled { opacity:.45; cursor:default; }
-button.confirm { background:var(--bad); border-color:var(--bad); color:#fff; }
-.actions { display:flex; gap:6px; flex-wrap:wrap; }
-.power { display:inline-flex; }
-.power button { border-radius:0; margin-left:-1px; padding:5px 10px; color:var(--muted); }
-.power button:first-child { border-radius:7px 0 0 7px; margin-left:0; }
-.power button:last-child { border-radius:0 7px 7px 0; }
-.power button:hover:not(:disabled) { color:var(--ink); position:relative; }
-.power button.confirm { color:#fff; position:relative; }
-.power .ic { width:15px; height:15px; }
-.linklist { display:grid; gap:8px; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); }
-.link { display:flex; align-items:center; gap:11px; text-decoration:none; padding:9px 11px;
-  border:1px solid var(--line); border-radius:10px; min-width:0; transition: border-color .15s, background .15s; }
-.link:hover { border-color: color-mix(in srgb, var(--c) 55%, transparent); background: color-mix(in srgb, var(--c) 5%, transparent); }
-.link > div { flex:1; min-width:0; }
-.sicon { width:36px; height:36px; border-radius:10px; display:grid; place-items:center; flex-shrink:0;
-  color:var(--c); background: color-mix(in srgb, var(--c) 14%, transparent); }
-.sicon .ic { width:19px; height:19px; }
-.link .t { font-weight:600; display:flex; justify-content:space-between; gap:8px; align-items:baseline; }
-.link .d { color:var(--muted); font-size:12px; line-height:1.35; overflow:hidden; display:-webkit-box;
-  -webkit-line-clamp:2; -webkit-box-orient:vertical; }
-.link .u { color:var(--faint); font-size:11px; font-weight:400; white-space:nowrap; font-variant-numeric: tabular-nums; }
-.kv { display:grid; grid-template-columns: 92px 1fr; gap:6px 12px; align-items:baseline; margin:0; }
-.kv > dt { color:var(--muted); font-size:12px; }
-.kv > dd { margin:0; min-width:0; font-size:13px; }
-.copyrow { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
-code { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; background:var(--soft); padding:1px 5px;
-  border-radius:5px; overflow-wrap: anywhere; }
-.banner { background:var(--bad-soft); color:var(--bad); border-radius:9px; padding:8px 12px; margin-bottom:12px; font-size:13px; }
-.state { font-size:12px; color:var(--muted); }
-.state.on { color:var(--accent); } .state.busy { color:var(--warn); } .state.bad { color:var(--bad); }
-.about { color:var(--muted); font-size:12px; margin:0 0 8px; }
-.controls { display:flex; gap:8px 16px; flex-wrap:wrap; align-items:center; margin-bottom:8px; }
-.controls label { display:flex; gap:6px; align-items:center; font-size:12px; color:var(--muted); }
-.controls select { font:inherit; font-size:12px; padding:3px 6px; border-radius:6px; border:1px solid var(--line);
-  background:var(--bg); color:var(--ink); }
-.controls input[type=range] { width:110px; accent-color: var(--accent); }
-.controls input[type=color] { width:34px; height:24px; padding:0 2px; border:1px solid var(--line); border-radius:5px; background:var(--bg); }
-.login { max-width: 380px; margin: 12vh auto 0; padding: 18px; }
-.login input { font:inherit; padding:8px 10px; width:100%; border:1px solid var(--line); border-radius:8px;
-  background:var(--bg); color:var(--ink); margin:6px 0 14px; }
-.err { color:var(--bad); font-size:13px; }
-footer { margin-top: 14px; color: var(--faint); font-size: 11px; }
-@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
-@media (max-width: 560px) { .kv { grid-template-columns: 1fr; gap: 1px; } .kv > dd { margin-bottom: 8px; }
-  .power button:not(.confirm) span { display:none; } .live span { display:none; }
-  .now { flex-wrap: wrap; } .now-actions { width: 100%; } .now-title { font-size: 18px; } }
-"""
-
 # The mark: a chip on green, for the favicon and the header logo (the page adds a status dot).
 CHIP = ("<rect x='9' y='9' width='14' height='14' rx='2.5' fill='none' stroke='white' stroke-width='2.2'/>"
         "<path d='M13 4.5v4.5M19 4.5v4.5M13 23v4.5M19 23v4.5M4.5 13h4.5M4.5 19h4.5M23 13h4.5M23 19h4.5'"
@@ -1033,459 +961,24 @@ FAVICON = ("<link rel='icon' id='favicon' href=\"data:image/svg+xml,<svg xmlns='
            " viewBox='0 0 32 32'><rect width='32' height='32' rx='8' fill='%232f6f4f'/>" + CHIP + "</svg>\">")
 LOGO = ("<span class='logo'><svg viewBox='0 0 32 32' aria-hidden='true'>" + CHIP + "</svg></span>")
 
-LOGIN = """<!doctype html><html><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1"><title>Sign in · Local AI</title>""" + FAVICON + """
-<style>""" + STYLE + """</style></head><body><main>
-<form class="card login" method="post" action="/_ai/login">
-<div class="brand" style="margin-bottom:14px">""" + LOGO + """<div><h1>Local AI</h1>
-<p class="sub">Sign in with the AI API key.</p></div></div>
-<p class="err" id="wrong" hidden>That key is wrong.</p>
-<label for="key" class="state">API key (<code>API_KEY</code> in /opt/stacks/ai/data/.env on the server)</label>
-<input id="key" name="key" type="password" autocomplete="current-password" autofocus>
-<input type="hidden" name="next" id="next"><button class="primary">Sign in</button></form>
-<script>
-const q = new URLSearchParams(location.search);
-document.getElementById('next').value = q.get('next') || '/';
-document.getElementById('wrong').hidden = !q.get('wrong');
-</script></main></body></html>"""
 
-PAGE = """<!doctype html><html><head><meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1"><title>Local AI</title>""" + FAVICON + """
-<style>""" + STYLE + """</style></head><body><main>
-<header class="top">
-  <div class="brand">""" + LOGO + """
-    <div><h1 id="name">Local AI</h1><div class="sub" id="holder">Loading…</div></div></div>
-  <div class="top-right"><span class="state" id="power-state"></span>
-    <span class="live" id="live" title="The page asks the box every 3 seconds"><i></i><span>live</span></span>
-    <div class="power" title="The model stops before suspend and starts again after waking. Wake with ./ai-model.sh wake or the power button.">
-      <button data-power="suspend" data-label="Suspend" data-icon="moon" aria-label="Suspend"><span>Suspend</span></button>
-      <button data-power="reboot" data-label="Restart" data-icon="restart" aria-label="Restart"><span>Restart</span></button>
-      <button data-power="poweroff" data-label="Shut down" data-icon="power" aria-label="Shut down"><span>Shut down</span></button></div>
-    <a class="btn" href="/_ai/logout">Sign out</a></div>
-</header>
-<div class="banner" id="error" hidden></div>
-<div class="cols">
-  <div class="col">
-    <section class="card">
-      <div class="card-head"><h2>GPU</h2><span class="hint">One at a time · a model picked in the web chat or the API switches by itself</span></div>
-      <div class="held-note" id="hold" hidden></div>
-      <div id="now"></div>
-      <div class="choices" id="choices"></div>
-    </section>
-    <section class="card" data-o="3"><div class="card-head"><h2>Services</h2></div><div class="linklist" id="links"></div></section>
-    <section class="card" data-o="5">
-      <div class="card-head"><h2>Connect</h2></div>
-      <dl class="kv">
-        <dt>API base URL</dt><dd><div class="copyrow"><code id="api"></code>
-          <button class="small" id="copy-api">Copy</button></div></dd>
-        <dt>Key</dt><dd>The API key, as <code>Authorization: Bearer &lt;key&gt;</code> or <code>x-api-key</code></dd>
-        <dt>Models</dt><dd><span class="chips" id="api-models" style="display:inline-flex;margin:0"></span>
-          <div class="state">OpenAI-compatible; Strata also speaks Anthropic's <code>/v1/messages</code>.</div></dd>
-        <dt>Idle</dt><dd class="state" id="idle"></dd>
-      </dl>
-    </section>
-  </div>
-  <div class="col">
-    <section class="card" data-o="2"><div class="card-head"><h2>Box</h2><span class="hint">graphs: last 3 minutes</span></div>
-      <div id="vitals"></div></section>
-    <div id="leds" data-o="6"></div>
-  </div>
-</div>
-<footer>Updates every 3 seconds.</footer>
-<script>
-const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const ICONS = {
-  chat: '<path d="M4 5h16v11H10l-6 4z"/><path d="M8 9.5h8M8 12.5h5"/>',
-  web: '<path d="M12 3l9 5-9 5-9-5z"/><path d="M3 12.5l9 5 9-5"/><path d="M3 16.5l9 5 9-5"/>',
-  image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="9.5" r="2"/><path d="M21 16l-5-5-10 9"/>',
-  gpu: '<rect x="2.5" y="6" width="19" height="11" rx="2"/><circle cx="9" cy="11.5" r="3"/><path d="M15 9.5h3.5M15 13.5h3.5M6 17v2.5M18 17v2.5"/>',
-  cpu: '<rect x="6" y="6" width="12" height="12" rx="2"/><rect x="9.5" y="9.5" width="5" height="5" rx="1"/><path d="M9 3v3M15 3v3M9 18v3M15 18v3M3 9h3M3 15h3M18 9h3M18 15h3"/>',
-  ram: '<rect x="2" y="7" width="20" height="9" rx="1.5"/><path d="M6 10v3M10 10v3M14 10v3M18 10v3M5 16v2.5M19 16v2.5"/>',
-  disk: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 14h18"/><circle cx="17" cy="16.5" r=".6"/>',
-  bolt: '<path d="M13 2L4.5 13.5H11l-1 8.5 8.5-11.5H12z"/>',
-  idle: '<rect x="2.5" y="6" width="19" height="11" rx="2" stroke-dasharray="3 2.5"/>',
-  arrow: '<path d="M7 17L17 7M9 7h8v8"/>',
-  moon: '<path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/>',
-  restart: '<path d="M4 12a8 8 0 1 0 2.4-5.7"/><path d="M4 4v4.5h4.5"/>',
-  power: '<path d="M12 3v8"/><path d="M6.6 6.6a8 8 0 1 0 10.8 0"/>',
-  pulse: '<path d="M3 12h4l2.5-6 4 12 2.5-6H21"/>',
-  bars: '<path d="M4 20V10M10 20V4M16 20v-7M21 20H3"/>',
-  shield: '<path d="M12 3l8 3v6c0 4.5-3.4 8-8 9-4.6-1-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/>',
-  flow: '<rect x="3" y="4" width="6" height="6" rx="1.5"/><rect x="15" y="14" width="6" height="6" rx="1.5"/><path d="M9 7h3a3 3 0 0 1 3 3v4"/>',
-  agent: '<rect x="4" y="7" width="16" height="12" rx="3"/><path d="M12 3v4M9 12v1.5M15 12v1.5M9.5 16h5"/>',
-  film: '<rect x="3" y="6" width="12" height="12" rx="2"/><path d="M15 10.5l6-3.5v10l-6-3.5"/>',
-  logs: '<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/>',
-  grid: '<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/>',
-};
-// The services' look, by module (and site, for the ai module's own sites).
-const SERVICE_LOOK = {
-  'ai/swarm': ['image', 'var(--image)'], 'ai/chat': ['chat', 'var(--web)'],
-  'uptime-kuma': ['pulse', 'var(--accent)'], 'beszel': ['bars', 'var(--orange)'], 'pihole': ['shield', 'var(--red)'],
-  'n8n': ['flow', 'var(--pink)'], 'hermes': ['agent', 'var(--teal)'], 'ai/studio': ['film', 'var(--image)'],
-  'ai/logs': ['logs', 'var(--teal)'],
-};
-const icon = n => `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">${ICONS[n]}</svg>`;
-let LINKS = [];
-// The services' links (install.sh writes them; {{.Host}} is the address this page was opened at).
-function siteLink(module, site) {
-  const l = LINKS.find(x => x.module === module && x.site === site);
-  return l ? l.url : '';
-}
-async function loadLinks() {
-  try {
-    const r = await fetch('/_ai/api/links');
-    if (!r.ok) return;
-    const d = await r.json();
-    if (d.name) { document.getElementById('name').textContent = d.name; document.title = d.name + ' · Local AI'; }
-    LINKS = (d.links || []).map(l => ({...l, url: l.url.replace('{{.Host}}', location.hostname)}));
-  } catch (e) { return; }
-  document.getElementById('links').innerHTML = LINKS.filter(l => !(l.module === 'ai' && l.site === 'main')).map(l =>
-{
-    const [ic, color] = SERVICE_LOOK[l.module + '/' + l.site] || SERVICE_LOOK[l.module] || ['grid', 'var(--muted)'];
-    return `<a class="link" href="${esc(l.url)}" style="--c:${color}"><span class="sicon">${icon(ic)}</span>
-     <div><div class="t">${esc(l.title)}<span class="u">${esc(l.url.replace(/^https?:\\/\\/[^/:]*/, '').replace(/\\/$/, '') || '')}</span></div>
-     <div class="d">${esc(l.description)}</div></div></a>`;
-  }).join('')
-    || '<div class="state">No other services on this box.</div>';
-  const main = siteLink('ai', 'main');
-  document.getElementById('api').textContent = (main ? main.replace(/\\/$/, '') : location.origin) + '/v1';
-}
-document.getElementById('copy-api').onclick = e => copy(document.getElementById('api').textContent, e.target);
-async function copy(text, btn) {
-  try { await navigator.clipboard.writeText(text); }
-  catch (err) {  // plain http on the LAN has no clipboard API
-    const t = document.createElement('textarea'); t.value = text; document.body.append(t); t.select();
-    document.execCommand('copy'); t.remove();
-  }
-  btn.textContent = 'Copied'; setTimeout(() => btn.textContent = 'Copy', 1500);
-}
+def template(name):
+    """The page's HTML, from its file next to this one, with the shared style and logo filled in."""
+    with open(os.path.join(HERE, name), encoding="utf-8") as f:
+        html = f.read()
+    return html.replace("{{style}}", STYLE).replace("{{favicon}}", FAVICON).replace("{{logo}}", LOGO)
 
-// --- Time: the box's clock (the status says it), so countdowns don't depend on this device's clock.
-let OFFSET = 0, lastOk = 0, switchSeen = null;
-const now = () => Date.now() / 1000 + OFFSET;
-const clock = s => { s = Math.max(0, Math.round(s)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
-function span(s) {
-  s = Math.max(0, s);
-  if (s < 60) return 'under a minute';
-  const m = Math.round(s / 60);
-  if (m < 60) return m + ' min';
-  const h = Math.floor(m / 60);
-  return h < 24 ? `${h} h ${m % 60} min` : `${Math.floor(h / 24)} d ${h % 24} h`;
-}
-// Timers are empty spans that tick() fills every second, so the 3-second redraws stay the same HTML.
-function tick() {
-  document.querySelectorAll('[data-since]').forEach(e => e.textContent = span(now() - e.dataset.since));
-  document.querySelectorAll('[data-clock]').forEach(e => e.textContent = clock(now() - e.dataset.clock));
-  document.querySelectorAll('[data-until]').forEach(e => e.textContent = span(e.dataset.until - now()));
-  const live = document.getElementById('live');
-  const off = lastOk && Date.now() - lastOk > 10000;
-  live.classList.toggle('off', !!off);
-  live.lastChild.textContent = off ? 'not answering' : 'live';
-}
-setInterval(tick, 1000);
-const FAV = document.getElementById('favicon').href;
-function favicon(dot) {
-  const el = document.getElementById('favicon');
-  const href = dot ? FAV.replace('%3C/svg%3E', '').replace(/<\\/svg>$/, '')
-    + `<circle cx='25' cy='25' r='6.5' fill='${dot.replace('#', '%23')}' stroke='%23121211' stroke-width='2'/></svg>` : FAV;
-  if (el.href !== href) el.href = href;
-}
-function setHTML(id, html) {
-  const el = document.getElementById(id);
-  if (el._html !== html) { el.innerHTML = html; el._html = html; }
-}
 
-// --- Services
-const holds = s => s.always_on ? !!(s.loaded && s.loaded.length) : s.state === 'running';
-const shortName = m => String(m).split('/').pop();
-const kindOf = s => s.always_on ? 'web' : s.kind === 'image' ? 'image' : 'chat';
-const TAGS = {chat: 'Chat · API and web chat', web: 'Web chat · always running', image: 'Images'};
-const startedAt = s => { const t = Date.parse(s.started || ''); return t > 0 ? t / 1000 : 0; };
-function stateText(s, switchingTo) {
-  if (switchingTo === s.id) return ['busy', 'switching…'];
-  if (switchingTo && s.always_on && s.loaded && s.loaded.length) return ['busy', 'unloading…'];
-  if (switchingTo && s.state === 'running' && !s.always_on) return ['busy', 'stopping…'];
-  if (s.state !== 'running') return ['off', 'stopped'];
-  if (s.always_on) return holds(s) ? ['on', 'on the GPU'] : ['', 'ready, nothing loaded'];
-  if (s.health === 'starting') return ['busy', 'starting'];
-  if (s.health === 'unhealthy') return ['bad', 'not answering'];
-  return ['on', 'on the GPU'];
-}
-function openLink(s) {
-  const link = s.site ? siteLink('ai', s.site) : '';
-  return link && s.state === 'running' ? `<a class="btn" href="${esc(link)}">Open ${icon('arrow')}</a>` : '';
-}
-function nowCard(d, svcs) {
-  const sw = d.switching;
-  if (!sw) switchSeen = null;
-  else {
-    if (!switchSeen || switchSeen.to !== sw) switchSeen = {to: sw, at: now()};
-    const target = svcs.find(s => s.id === sw);
-    const others = svcs.filter(s => s.id !== sw && holds(s));
-    const steps = [[others.length ? 'Stop ' + others.map(s => s.title).join(', ') : 'Free the GPU', !others.length]];
-    if (target) steps.push(['Start the container', target.state === 'running'],
-                           ['Load the model', target.state === 'running' && target.health !== 'starting']);
-    const cur = steps.findIndex(s => !s[1]);
-    const list = steps.map(([label], i) =>
-      `<li class="${cur === -1 || i < cur ? 'done' : i === cur ? 'doing' : ''}">${esc(label)}</li>`).join('');
-    const k = target ? kindOf(target) : '';
-    return `<div class="now switching k-${k}"><div class="now-icon">${icon(target ? k : 'idle')}</div>
-      <div class="now-main"><div class="now-state busy"><span class="dot pulse"></span>${target ? 'Switching to' : 'Stopping'}</div>
-        <div class="now-title">${esc(target ? target.title : 'Freeing the GPU')}</div>
-        <ol class="steps">${list}</ol>
-        ${target && target.health === 'starting' ? '<div class="hint" style="margin-top:4px">A first start downloads the model, which can take a while.</div>' : ''}</div>
-      <div class="now-actions"><span class="timer" data-clock="${switchSeen.at}"></span></div></div>`;
-  }
-  const h = svcs.find(holds);
-  if (!h) {
-    const last = d.idle_stop;
-    return `<div class="now free"><div class="now-icon">${icon('idle')}</div><div class="now-main">
-      <div class="now-state"><span class="dot"></span>Nothing loaded</div><div class="now-title">The GPU is free</div>
-      <div class="now-meta">Pick a model below, or just send a request: the API and the web chat start the model they ask for.
-      ${last ? `<span>Last idle stop: ${esc(last.service)}, <span data-since="${last.at}"></span> ago.</span>` : ''}</div></div></div>`;
-  }
-  const k = kindOf(h);
-  let cls = 'on', text = 'Ready';
-  if (h.health === 'starting') [cls, text] = ['busy', 'Loading the model…'];
-  else if (h.health === 'unhealthy') [cls, text] = ['bad', 'Not answering'];
-  else if (h.models && h.models.length && d.requests) [cls, text] = ['on', `Answering ${d.requests} request${d.requests > 1 ? 's' : ''}`];
-  else if (h.always_on) text = 'Loaded';
-  const meta = [];
-  if (h.always_on) (h.loaded || []).forEach(m => meta.push(`<code title="${esc(m)}">${esc(shortName(m))}</code>`));
-  else if (h.models && h.models.length) meta.push(`<code>${esc(h.models[0])}</code>`);
-  if (!h.always_on && startedAt(h)) meta.push(`<span>up <b data-since="${startedAt(h)}"></b></span>`);
-  if (h.idle_stop_at && !d.requests) meta.push(`<span>idle stop in <b data-until="${h.idle_stop_at}"></b></span>`);
-  return `<div class="now k-${k}"><div class="now-icon">${icon(k)}</div>
-    <div class="now-main"><div class="now-state ${cls}"><span class="dot ${cls === 'on' ? 'pulse' : ''}"></span>${text}</div>
-      <div class="now-title">${esc(h.title)}</div><div class="now-meta">${meta.join('')}</div></div>
-    <div class="now-actions">${openLink(h)}<button onclick="go('none')" ${d.switching ? 'disabled' : ''}>${h.always_on ? 'Unload' : 'Stop'}</button></div></div>`;
-}
-function choice(s, d) {
-  const k = kindOf(s), active = holds(s) && !d.switching, target = d.switching === s.id;
-  const [cls, text] = stateText(s, d.switching);
-  const chips = [];
-  if (s.models && s.models.length) chips.push(`<span class="chip">${esc(s.models[0])}</span>`);
-  if (s.always_on && s.installed != null) chips.push(`<span class="chip plain">${s.installed} models installed</span>`);
-  let btn = '';
-  if (active || target) btn = '';
-  else if (s.always_on) {
-    // Ollama is always running; "using" it means making room on the GPU for its models.
-    const other = d.services.find(o => o.id !== s.id && holds(o));
-    if (other) btn = `<button class="small" title="Stops ${esc(other.title)}, so the web chat's Ollama models load right away" ${d.switching ? 'disabled' : ''} onclick="go('${esc(s.id)}')">Make room</button>`;
-  } else btn = `<button class="primary small" ${d.switching ? 'disabled' : ''} onclick="go('${esc(s.id)}')">Use</button>`;
-  return `<div class="choice k-${k} ${active ? 'active' : ''} ${target ? 'target' : ''}">
-    <div class="choice-top"><span class="kicon">${icon(k)}</span><div style="min-width:0">
-      <div class="tag">${TAGS[k]}</div><div class="choice-title">${esc(s.title)}</div></div></div>
-    <div class="choice-about">${esc(s.about)}</div>
-    ${chips.length ? `<div class="chips">${chips.join('')}</div>` : ''}
-    <div class="choice-foot"><span class="pill ${cls}">${text}</span>${btn}</div></div>`;
-}
-
-// --- Vitals. Each kind of number has its own look: capacity as a bar, load as a 3-minute
-// history, temperature on a cool-to-hot scale, power split by where it goes.
-const H = {gpu: [], cpu: [], power: []};
-const record = (k, v) => { if (v == null) return; H[k].push(v); if (H[k].length > 60) H[k].shift(); };
-const gb = mib => (mib / 1024).toFixed(1);
-const lvl = (v, warn, bad) => v >= bad ? 'bad' : v >= warn ? 'warn' : '';
-const metric = (label, value, visual, note, cls) =>
-  `<div class="m ${cls || ''}"><div class="m-top"><span class="m-label">${label}</span><span class="m-val">${value}</span></div>${visual}<div class="m-note">${note}</div></div>`;
-function spark(vals, max, cls) {
-  const W = 120, Hh = 26, N = 60;
-  const base = `<line x1="0" y1="${Hh - 0.5}" x2="${W}" y2="${Hh - 0.5}"/>`;
-  if (!vals.length) return `<svg class="spark" viewBox="0 0 ${W} ${Hh}" preserveAspectRatio="none">${base}</svg>`;
-  const pts = vals.map((v, i) => [(W * (N - vals.length + i) / (N - 1)).toFixed(1),
-                                  (Hh - 1 - (Hh - 3) * Math.min(v, max) / max).toFixed(1)]);
-  const line = pts.map(p => p.join(',')).join(' ');
-  return `<svg class="spark ${cls || ''}" viewBox="0 0 ${W} ${Hh}" preserveAspectRatio="none">${base}
-    <polygon points="${pts[0][0]},${Hh} ${line} ${pts[pts.length - 1][0]},${Hh}"/><polyline points="${line}"/></svg>`;
-}
-function temp(v, warn, bad) {
-  if (v == null) return metric('Temperature', '–', '<div class="scale" style="opacity:.25"></div>', 'no sensor');
-  const at = Math.max(0, Math.min(100, (v - 30) / (95 - 30) * 100));
-  return metric('Temperature', `${v}<small> °C</small>`, `<div class="scale"><i style="left:${at}%"></i></div>`,
-    v >= bad ? 'hot' : v >= warn ? 'warm' : 'cool', lvl(v, warn, bad));
-}
-const loadMetric = (v, hist, cls, note) => metric('Load', v != null ? `${v}<small>%</small>` : '–', spark(hist, 100, cls), note);
-const section = (ic, name, sub, body) =>
-  `<div class="vsec"><div class="vhead">${icon(ic)}<span class="vname">${name}</span><span class="vsub">${sub}</span></div><div class="vgrid">${body}</div></div>`;
-function vitals(d) {
-  const g = d.gpu, c = d.cpu || {}, m = d.ram, out = [];
-  if (g) {
-    const n = Math.round(g.total / 1024), used = g.used / 1024;
-    const cells = Array.from({length: n}, (_, i) =>
-      `<i><b style="width:${Math.max(0, Math.min(1, used - i)) * 100}%"></b></i>`).join('');
-    out.push(section('gpu', 'GPU', esc(g.name.replace(/^NVIDIA (GeForce )?/, '')),
-      metric('Video memory', `${gb(g.used)}<small> / ${gb(g.total)} GB</small>`, `<div class="cells">${cells}</div>`,
-        `${gb(g.total - g.used)} GB free`, 'wide')
-      + loadMetric(g.util, H.gpu, '', g.util >= 10 ? 'working' : 'idle')
-      + temp(g.temp, 75, 83)));
-  }
-  out.push(section('cpu', 'CPU', (c.cores || '?') + ' threads',
-    loadMetric(c.load, H.cpu, 'cpu', c.load == null ? '' : c.load >= 85 ? 'busy' : c.load >= 10 ? 'working' : 'idle')
-    + temp(c.temp, 75, 85)));
-  if (m) {
-    const p = 100 * m.used / m.total;
-    out.push(section('ram', 'Memory', gb(m.total) + ' GB',
-      metric('In use', `${gb(m.used)}<small> / ${gb(m.total)} GB</small>`, `<div class="bar"><i style="width:${p}%"></i></div>`,
-        `${gb(m.total - m.used)} GB free`, 'wide ' + lvl(p, 80, 92))));
-  }
-  if (d.disks && d.disks.length) {
-    const size = mib => mib >= 1024 * 1024 ? `${(mib / 1024 / 1024).toFixed(2)}<small> TB</small>` : `${Math.round(mib / 1024)}<small> GB</small>`;
-    out.push(section('disk', 'Storage', 'SSDs', d.disks.map(s => {
-      const p = 100 * s.used / (s.used + s.free);
-      return metric(s.name, `${size(s.used)}<small> / </small>${size(s.total)}`,
-        `<div class="bar"><i style="width:${p}%"></i></div>`,
-        `${Math.round(s.free / 1024)} GB free · ${Math.round(p)}% used`, 'wide ' + lvl(p, 85, 95));
-    }).join('')));
-  }
-  let power;
-  if (d.total_power != null) {
-    const parts = [['GPU', g.power, 'p-gpu', 'var(--accent)'], ['CPU', c.power, 'p-cpu', 'var(--cpu)'],
-                   ['Rest, estimated', d.rest_watts, 'p-rest', 'var(--rest)']];
-    const bar = parts.map(([, w, cls]) => `<i class="${cls}" style="width:${100 * w / d.total_power}%"></i>`).join('');
-    const legend = parts.map(([name, w, , color]) => `<span style="--c:${color}">${name} <b>${w} W</b></span>`).join('');
-    const peak = Math.max(150, ...H.power);
-    power = metric('Whole box', `≈ ${d.total_power}<small> W</small>`,
-      `<div class="bar">${bar}</div><div class="legend">${legend}</div>${spark(H.power, peak)}`,
-      `GPU and CPU measured; ~${d.rest_watts} W for board, RAM, disks, fans`, 'wide big');
-  } else {
-    power = metric('Whole box', '–', '', c.power == null ? 'CPU power not measured: rerun setup.sh' : 'the GPU reports no power', 'wide');
-  }
-  out.push(section('bolt', 'Power', 'estimate', power));
-  return out.join('');
-}
-
-async function load() {
-  let r;
-  try { r = await fetch('/_ai/api/status'); } catch (e) { return; }
-  if (r.status === 401) { location.href = '/_ai/login?next=/'; return; }
-  const d = await r.json();
-  lastOk = Date.now();
-  const live = document.getElementById('live');
-  live.classList.remove('blink'); void live.offsetWidth; live.classList.add('blink');
-  if (d.now) OFFSET = d.now - Date.now() / 1000;
-  const err = document.getElementById('error');
-  err.textContent = d.error || ''; err.hidden = !d.error;
-  if (!d.services) { tick(); return; }  // Docker didn't answer; keep the last view
-  record('gpu', d.gpu && d.gpu.util); record('cpu', d.cpu && d.cpu.load); record('power', d.total_power);
-  const svcs = d.services, holder = svcs.find(holds), target = svcs.find(s => s.id === d.switching);
-  document.getElementById('holder').innerHTML = d.switching
-    ? `<span class="state busy">Switching to ${esc(target ? target.title : 'nothing')}…</span>`
-    : holder ? `<span class="state on">● ${esc(holder.title)}${holder.always_on ? ' (' + esc(shortName(holder.loaded[0])) + ')' : ''} has the GPU</span>`
-    : 'The GPU is free';
-  favicon(d.switching ? '#e3b350' : holder ? '#72e09e' : '');
-  document.body.classList.toggle('held', !!d.hold);
-  document.getElementById('hold').textContent = d.hold ? `${d.hold} is using the GPU: switching is off until it's done.` : '';
-  document.getElementById('hold').hidden = !d.hold;
-  setHTML('now', nowCard(d, svcs));
-  setHTML('choices', svcs.map(s => choice(s, d)).join(''));
-  setHTML('vitals', vitals(d));
-  setHTML('api-models', svcs.filter(s => s.models && s.models.length)
-    .map(s => `<span class="chip">${esc(s.models[0])}</span>`).join(''));
-  const idle = d.idle_stop;
-  document.getElementById('idle').textContent = (d.idle_minutes
-    ? `The chat model stops after ${d.idle_minutes} min without requests; the next one starts it again (1-2 min).`
-    : 'Chat models stay loaded until you stop them.')
-    + (idle ? ` Last idle stop: ${idle.service}, ${new Date(idle.at * 1000).toLocaleString()}.` : '');
-  renderLeds(d.leds);
-  tick();
-}
-// The LED card is built once; later loads only update it, so a control you're using isn't redrawn.
-function renderLeds(l) {
-  const box = document.getElementById('leds');
-  if (!l) { box.innerHTML = ''; return; }
-  if (!box.firstChild) {
-    box.innerHTML = `<section class="card"><div class="card-head"><h2>Case lighting</h2><span class="pill" id="leds-state"></span></div>
-      <p class="about" id="leds-devs"></p>
-      <div class="controls">
-        <label>Effect <select id="leds-effect"></select></label>
-        <label>Speed <input type="range" id="leds-speed" min="0" max="100" step="5"></label>
-        <label>Color <input type="color" id="leds-color"></label>
-      </div>
-      <div class="actions"><button id="leds-off">Off</button><button id="leds-on">On</button></div></section>`;
-    document.getElementById('leds-off').onclick = () => setLeds({state: 'off'});
-    document.getElementById('leds-on').onclick = () => setLeds({state: 'on'});
-    document.getElementById('leds-effect').onchange = e => setLeds({state: 'on', effect: e.target.value});
-    document.getElementById('leds-speed').onchange = e => setLeds({state: 'on', speed: e.target.value});
-    document.getElementById('leds-color').onchange = e => setLeds({state: 'on', color: e.target.value});
-  }
-  const s = l.settings, on = s.state === 'on';
-  document.getElementById('leds-devs').textContent =
-    l.devices.map(x => x.name).join(' · ') || 'RGB on the board headers, through OpenRGB';
-  const st = document.getElementById('leds-state');
-  st.textContent = !s.state ? 'not set' : (l.applied ? (on ? 'on' : 'off') : 'applying…');
-  st.className = 'pill ' + (l.applied ? (on ? 'on' : 'off') : 'busy');
-  document.getElementById('leds-off').disabled = s.state === 'off';
-  document.getElementById('leds-on').disabled = on;
-  const sel = document.getElementById('leds-effect');
-  if (sel.options.length !== l.effects.length) {
-    sel.replaceChildren(...l.effects.map(name => new Option(name, name)));
-  }
-  const active = document.activeElement;
-  if (active !== sel) {
-    const match = l.effects.find(e => e.toLowerCase() === (s.effect || '').toLowerCase());
-    if (match) sel.value = match;
-  }
-  const speed = document.getElementById('leds-speed');
-  if (active !== speed) speed.value = s.speed === '' ? 50 : s.speed;
-  const color = document.getElementById('leds-color');
-  if (active !== color) color.value = '#' + (s.color || 'FFFFFF').toLowerCase();
-}
-function showError(text) { const e = document.getElementById('error'); e.textContent = text; e.hidden = !text; }
-async function setLeds(change) {
-  const r = await fetch('/_ai/api/leds', {method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify(change)});
-  if (!r.ok) showError((await r.json()).error);
-  load();
-}
-// Power buttons confirm with a second click on the button itself (no browser dialog, which a
-// browser may block): the first click arms it for 5 seconds.
-const powerText = {
-  suspend: ['Really suspend?', 'Suspending… the page stops answering until the box wakes up.'],
-  reboot: ['Really restart?', 'Restarting… back in about two minutes.'],
-  poweroff: ['Really shut down?', 'Shutting down… back with the power button (or Wake-on-LAN, if the BIOS allows it).'],
-};
-document.querySelectorAll('[data-power]').forEach(b => {
-  b.insertAdjacentHTML('afterbegin', icon(b.dataset.icon));
-  b.onclick = () => power(b);
-});
-const label = (b, text) => b.querySelector('span').textContent = text;
-async function power(b) {
-  const action = b.dataset.power, state = document.getElementById('power-state');
-  if (!b.classList.contains('confirm')) {
-    document.querySelectorAll('[data-power]').forEach(o => { o.classList.remove('confirm'); label(o, o.dataset.label); });
-    b.classList.add('confirm');
-    label(b, powerText[action][0]);
-    clearTimeout(b.timer);
-    b.timer = setTimeout(() => { b.classList.remove('confirm'); label(b, b.dataset.label); }, 5000);
-    return;
-  }
-  clearTimeout(b.timer);
-  b.classList.remove('confirm');
-  label(b, b.dataset.label);
-  state.className = 'state busy';
-  state.textContent = 'Sending…';
-  try {
-    const r = await fetch('/_ai/api/power', {method: 'POST', headers: {'Content-Type': 'application/json'},
-      body: JSON.stringify({action})});
-    if (r.status === 401) { location.href = '/_ai/login?next=/'; return; }
-    state.textContent = r.ok ? powerText[action][1] : (await r.json()).error;
-    if (!r.ok) state.className = 'state bad';
-  } catch (e) {
-    state.className = 'state bad';
-    state.textContent = 'Could not reach the box: ' + e.message;
-  }
-}
-async function go(id) {
-  const r = await fetch('/_ai/api/switch', {method: 'POST', headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({service: id})});
-  if (!r.ok) showError((await r.json()).error);
-  load();
-}
-loadLinks().then(load); setInterval(load, 3000);
-</script></main></body></html>"""
+HERE = os.path.dirname(os.path.abspath(__file__))
+with open(os.path.join(HERE, "style.css"), encoding="utf-8") as f:
+    STYLE = f.read()
+LOGIN = template("login.html")
+PAGE = template("page.html")
 
 if __name__ == "__main__":
+    if SERVICES_FILE:
+        signal.signal(signal.SIGTERM, stop_all_processes)
+        signal.signal(signal.SIGINT, stop_all_processes)
     if IDLE_MINUTES > 0:
         threading.Thread(target=idle_watch, daemon=True).start()
-    ThreadingHTTPServer(("0.0.0.0", 8079), Handler).serve_forever()
+    ThreadingHTTPServer((LISTEN, PORT), Handler).serve_forever()

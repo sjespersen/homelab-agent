@@ -318,6 +318,7 @@ services:
       NAME: "${NAME}"   # the box's name, for the page
       LINKS_FILE: /site/links.json   # the other services' links (install.sh), for the page
       IDLE_MINUTES: "${AI_IDLE_MINUTES}"   # stop the chat model after this long unused; 0: never
+      POWER: "yes"   # suspend/restart/shut down buttons, for host/homelab-power.sh
       LEDS: "${AI_LEDS}"   # yes: show the LED switch
       LEDS_EFFECT: "${AI_LEDS_ON_MODE}"   # defaults until changed on the page
       LEDS_SPEED: "${AI_LEDS_ON_SPEED}"

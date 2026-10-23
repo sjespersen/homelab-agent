@@ -1,0 +1,437 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>Local AI</title>{{favicon}}
+<style>
+{{style}}</style></head><body><main>
+<header class="top">
+  <div class="brand">{{logo}}
+    <div><h1 id="name">Local AI</h1><div class="sub" id="holder">Loading…</div></div></div>
+  <div class="top-right"><span class="state" id="power-state"></span>
+    <span class="live" id="live" title="The page asks the box every 3 seconds"><i></i><span>live</span></span>
+    <div class="power" title="The model stops before suspend and starts again after waking. Wake with ./ai-model.sh wake or the power button.">
+      <button data-power="suspend" data-label="Suspend" data-icon="moon" aria-label="Suspend"><span>Suspend</span></button>
+      <button data-power="reboot" data-label="Restart" data-icon="restart" aria-label="Restart"><span>Restart</span></button>
+      <button data-power="poweroff" data-label="Shut down" data-icon="power" aria-label="Shut down"><span>Shut down</span></button></div>
+    <a class="btn" href="/_ai/logout">Sign out</a></div>
+</header>
+<div class="banner" id="error" hidden></div>
+<div class="cols">
+  <div class="col">
+    <section class="card">
+      <div class="card-head"><h2>GPU</h2><span class="hint">One at a time · a model picked in the web chat or the API switches by itself</span></div>
+      <div class="held-note" id="hold" hidden></div>
+      <div id="now"></div>
+      <div class="choices" id="choices"></div>
+    </section>
+    <section class="card" data-o="3"><div class="card-head"><h2>Services</h2></div><div class="linklist" id="links"></div></section>
+    <section class="card" data-o="5">
+      <div class="card-head"><h2>Connect</h2></div>
+      <dl class="kv">
+        <dt>API base URL</dt><dd><div class="copyrow"><code id="api"></code>
+          <button class="small" id="copy-api">Copy</button></div></dd>
+        <dt>Key</dt><dd>The API key, as <code>Authorization: Bearer &lt;key&gt;</code> or <code>x-api-key</code></dd>
+        <dt>Models</dt><dd><span class="chips" id="api-models" style="display:inline-flex;margin:0"></span>
+          <div class="state">OpenAI-compatible; Strata also speaks Anthropic's <code>/v1/messages</code>.</div></dd>
+        <dt>Idle</dt><dd class="state" id="idle"></dd>
+      </dl>
+    </section>
+  </div>
+  <div class="col">
+    <section class="card" data-o="2"><div class="card-head"><h2>Box</h2><span class="hint">graphs: last 3 minutes</span></div>
+      <div id="vitals"></div></section>
+    <div id="leds" data-o="6"></div>
+  </div>
+</div>
+<footer>Updates every 3 seconds.</footer>
+<script>
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const ICONS = {
+  chat: '<path d="M4 5h16v11H10l-6 4z"/><path d="M8 9.5h8M8 12.5h5"/>',
+  web: '<path d="M12 3l9 5-9 5-9-5z"/><path d="M3 12.5l9 5 9-5"/><path d="M3 16.5l9 5 9-5"/>',
+  image: '<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="9.5" r="2"/><path d="M21 16l-5-5-10 9"/>',
+  gpu: '<rect x="2.5" y="6" width="19" height="11" rx="2"/><circle cx="9" cy="11.5" r="3"/><path d="M15 9.5h3.5M15 13.5h3.5M6 17v2.5M18 17v2.5"/>',
+  cpu: '<rect x="6" y="6" width="12" height="12" rx="2"/><rect x="9.5" y="9.5" width="5" height="5" rx="1"/><path d="M9 3v3M15 3v3M9 18v3M15 18v3M3 9h3M3 15h3M18 9h3M18 15h3"/>',
+  ram: '<rect x="2" y="7" width="20" height="9" rx="1.5"/><path d="M6 10v3M10 10v3M14 10v3M18 10v3M5 16v2.5M19 16v2.5"/>',
+  disk: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="M3 14h18"/><circle cx="17" cy="16.5" r=".6"/>',
+  bolt: '<path d="M13 2L4.5 13.5H11l-1 8.5 8.5-11.5H12z"/>',
+  idle: '<rect x="2.5" y="6" width="19" height="11" rx="2" stroke-dasharray="3 2.5"/>',
+  arrow: '<path d="M7 17L17 7M9 7h8v8"/>',
+  moon: '<path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/>',
+  restart: '<path d="M4 12a8 8 0 1 0 2.4-5.7"/><path d="M4 4v4.5h4.5"/>',
+  power: '<path d="M12 3v8"/><path d="M6.6 6.6a8 8 0 1 0 10.8 0"/>',
+  pulse: '<path d="M3 12h4l2.5-6 4 12 2.5-6H21"/>',
+  bars: '<path d="M4 20V10M10 20V4M16 20v-7M21 20H3"/>',
+  shield: '<path d="M12 3l8 3v6c0 4.5-3.4 8-8 9-4.6-1-8-4.5-8-9V6z"/><path d="M9 12l2 2 4-4"/>',
+  flow: '<rect x="3" y="4" width="6" height="6" rx="1.5"/><rect x="15" y="14" width="6" height="6" rx="1.5"/><path d="M9 7h3a3 3 0 0 1 3 3v4"/>',
+  agent: '<rect x="4" y="7" width="16" height="12" rx="3"/><path d="M12 3v4M9 12v1.5M15 12v1.5M9.5 16h5"/>',
+  film: '<rect x="3" y="6" width="12" height="12" rx="2"/><path d="M15 10.5l6-3.5v10l-6-3.5"/>',
+  logs: '<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 8h8M8 12h8M8 16h5"/>',
+  grid: '<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/>',
+};
+// The services' look, by module (and site, for the ai module's own sites).
+const SERVICE_LOOK = {
+  'ai/swarm': ['image', 'var(--image)'], 'ai/chat': ['chat', 'var(--web)'],
+  'uptime-kuma': ['pulse', 'var(--accent)'], 'beszel': ['bars', 'var(--orange)'], 'pihole': ['shield', 'var(--red)'],
+  'n8n': ['flow', 'var(--pink)'], 'hermes': ['agent', 'var(--teal)'], 'ai/studio': ['film', 'var(--image)'],
+  'ai/logs': ['logs', 'var(--teal)'],
+};
+const icon = n => `<svg class="ic" viewBox="0 0 24 24" aria-hidden="true">${ICONS[n]}</svg>`;
+let LINKS = [];
+// The services' links (install.sh writes them; {{.Host}} is the address this page was opened at).
+function siteLink(module, site) {
+  const l = LINKS.find(x => x.module === module && x.site === site);
+  return l ? l.url : '';
+}
+async function loadLinks() {
+  try {
+    const r = await fetch('/_ai/api/links');
+    if (!r.ok) return;
+    const d = await r.json();
+    if (d.name) { document.getElementById('name').textContent = d.name; document.title = d.name + ' · Local AI'; }
+    LINKS = (d.links || []).map(l => ({...l, url: l.url.replace('{{.Host}}', location.hostname)}));
+  } catch (e) { return; }
+  document.getElementById('links').innerHTML = LINKS.filter(l => !(l.module === 'ai' && l.site === 'main')).map(l =>
+{
+    const [ic, color] = SERVICE_LOOK[l.module + '/' + l.site] || SERVICE_LOOK[l.module] || ['grid', 'var(--muted)'];
+    return `<a class="link" href="${esc(l.url)}" style="--c:${color}"><span class="sicon">${icon(ic)}</span>
+     <div><div class="t">${esc(l.title)}<span class="u">${esc(l.url.replace(/^https?:\/\/[^/:]*/, '').replace(/\/$/, '') || '')}</span></div>
+     <div class="d">${esc(l.description)}</div></div></a>`;
+  }).join('')
+    || '<div class="state">No other services on this box.</div>';
+  const main = siteLink('ai', 'main');
+  document.getElementById('api').textContent = (main ? main.replace(/\/$/, '') : location.origin) + '/v1';
+}
+document.getElementById('copy-api').onclick = e => copy(document.getElementById('api').textContent, e.target);
+async function copy(text, btn) {
+  try { await navigator.clipboard.writeText(text); }
+  catch (err) {  // plain http on the LAN has no clipboard API
+    const t = document.createElement('textarea'); t.value = text; document.body.append(t); t.select();
+    document.execCommand('copy'); t.remove();
+  }
+  btn.textContent = 'Copied'; setTimeout(() => btn.textContent = 'Copy', 1500);
+}
+
+// --- Time: the box's clock (the status says it), so countdowns don't depend on this device's clock.
+let OFFSET = 0, lastOk = 0, switchSeen = null;
+const now = () => Date.now() / 1000 + OFFSET;
+const clock = s => { s = Math.max(0, Math.round(s)); return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); };
+function span(s) {
+  s = Math.max(0, s);
+  if (s < 60) return 'under a minute';
+  const m = Math.round(s / 60);
+  if (m < 60) return m + ' min';
+  const h = Math.floor(m / 60);
+  return h < 24 ? `${h} h ${m % 60} min` : `${Math.floor(h / 24)} d ${h % 24} h`;
+}
+// Timers are empty spans that tick() fills every second, so the 3-second redraws stay the same HTML.
+function tick() {
+  document.querySelectorAll('[data-since]').forEach(e => e.textContent = span(now() - e.dataset.since));
+  document.querySelectorAll('[data-clock]').forEach(e => e.textContent = clock(now() - e.dataset.clock));
+  document.querySelectorAll('[data-until]').forEach(e => e.textContent = span(e.dataset.until - now()));
+  const live = document.getElementById('live');
+  const off = lastOk && Date.now() - lastOk > 10000;
+  live.classList.toggle('off', !!off);
+  live.lastChild.textContent = off ? 'not answering' : 'live';
+}
+setInterval(tick, 1000);
+const FAV = document.getElementById('favicon').href;
+function favicon(dot) {
+  const el = document.getElementById('favicon');
+  const href = dot ? FAV.replace('%3C/svg%3E', '').replace(/<\/svg>$/, '')
+    + `<circle cx='25' cy='25' r='6.5' fill='${dot.replace('#', '%23')}' stroke='%23121211' stroke-width='2'/></svg>` : FAV;
+  if (el.href !== href) el.href = href;
+}
+function setHTML(id, html) {
+  const el = document.getElementById(id);
+  if (el._html !== html) { el.innerHTML = html; el._html = html; }
+}
+
+// --- Services
+const holds = s => s.always_on ? !!(s.loaded && s.loaded.length) : s.state === 'running';
+const shortName = m => String(m).split('/').pop();
+const kindOf = s => s.always_on ? 'web' : s.kind === 'image' ? 'image' : 'chat';
+const TAGS = {chat: 'Chat · API and web chat', web: 'Web chat · always running', image: 'Images'};
+const startedAt = s => { const t = Date.parse(s.started || ''); return t > 0 ? t / 1000 : 0; };
+function stateText(s, switchingTo) {
+  if (switchingTo === s.id) return ['busy', 'switching…'];
+  if (switchingTo && s.always_on && s.loaded && s.loaded.length) return ['busy', 'unloading…'];
+  if (switchingTo && s.state === 'running' && !s.always_on) return ['busy', 'stopping…'];
+  if (s.state !== 'running') return ['off', 'stopped'];
+  if (s.always_on) return holds(s) ? ['on', 'on the GPU'] : ['', 'ready, nothing loaded'];
+  if (s.health === 'starting') return ['busy', 'starting'];
+  if (s.health === 'unhealthy') return ['bad', 'not answering'];
+  return ['on', 'on the GPU'];
+}
+function openLink(s) {
+  const link = s.site ? siteLink('ai', s.site) : '';
+  return link && s.state === 'running' ? `<a class="btn" href="${esc(link)}">Open ${icon('arrow')}</a>` : '';
+}
+function nowCard(d, svcs) {
+  const sw = d.switching;
+  if (!sw) switchSeen = null;
+  else {
+    if (!switchSeen || switchSeen.to !== sw) switchSeen = {to: sw, at: now()};
+    const target = svcs.find(s => s.id === sw);
+    const others = svcs.filter(s => s.id !== sw && holds(s));
+    const steps = [[others.length ? 'Stop ' + others.map(s => s.title).join(', ') : 'Free the GPU', !others.length]];
+    if (target) steps.push(['Start the container', target.state === 'running'],
+                           ['Load the model', target.state === 'running' && target.health !== 'starting']);
+    const cur = steps.findIndex(s => !s[1]);
+    const list = steps.map(([label], i) =>
+      `<li class="${cur === -1 || i < cur ? 'done' : i === cur ? 'doing' : ''}">${esc(label)}</li>`).join('');
+    const k = target ? kindOf(target) : '';
+    return `<div class="now switching k-${k}"><div class="now-icon">${icon(target ? k : 'idle')}</div>
+      <div class="now-main"><div class="now-state busy"><span class="dot pulse"></span>${target ? 'Switching to' : 'Stopping'}</div>
+        <div class="now-title">${esc(target ? target.title : 'Freeing the GPU')}</div>
+        <ol class="steps">${list}</ol>
+        ${target && target.health === 'starting' ? '<div class="hint" style="margin-top:4px">A first start downloads the model, which can take a while.</div>' : ''}</div>
+      <div class="now-actions"><span class="timer" data-clock="${switchSeen.at}"></span></div></div>`;
+  }
+  const h = svcs.find(holds);
+  if (!h) {
+    const last = d.idle_stop;
+    return `<div class="now free"><div class="now-icon">${icon('idle')}</div><div class="now-main">
+      <div class="now-state"><span class="dot"></span>Nothing loaded</div><div class="now-title">The GPU is free</div>
+      <div class="now-meta">Pick a model below, or just send a request: the API and the web chat start the model they ask for.
+      ${last ? `<span>Last idle stop: ${esc(last.service)}, <span data-since="${last.at}"></span> ago.</span>` : ''}</div></div></div>`;
+  }
+  const k = kindOf(h);
+  let cls = 'on', text = 'Ready';
+  if (h.health === 'starting') [cls, text] = ['busy', 'Loading the model…'];
+  else if (h.health === 'unhealthy') [cls, text] = ['bad', 'Not answering'];
+  else if (h.models && h.models.length && d.requests) [cls, text] = ['on', `Answering ${d.requests} request${d.requests > 1 ? 's' : ''}`];
+  else if (h.always_on) text = 'Loaded';
+  const meta = [];
+  if (h.always_on) (h.loaded || []).forEach(m => meta.push(`<code title="${esc(m)}">${esc(shortName(m))}</code>`));
+  else if (h.models && h.models.length) meta.push(`<code>${esc(h.models[0])}</code>`);
+  if (!h.always_on && startedAt(h)) meta.push(`<span>up <b data-since="${startedAt(h)}"></b></span>`);
+  if (h.idle_stop_at && !d.requests) meta.push(`<span>idle stop in <b data-until="${h.idle_stop_at}"></b></span>`);
+  return `<div class="now k-${k}"><div class="now-icon">${icon(k)}</div>
+    <div class="now-main"><div class="now-state ${cls}"><span class="dot ${cls === 'on' ? 'pulse' : ''}"></span>${text}</div>
+      <div class="now-title">${esc(h.title)}</div><div class="now-meta">${meta.join('')}</div></div>
+    <div class="now-actions">${openLink(h)}<button onclick="go('none')" ${d.switching ? 'disabled' : ''}>${h.always_on ? 'Unload' : 'Stop'}</button></div></div>`;
+}
+function choice(s, d) {
+  const k = kindOf(s), active = holds(s) && !d.switching, target = d.switching === s.id;
+  const [cls, text] = stateText(s, d.switching);
+  const chips = [];
+  if (s.models && s.models.length) chips.push(`<span class="chip">${esc(s.models[0])}</span>`);
+  if (s.always_on && s.installed != null) chips.push(`<span class="chip plain">${s.installed} models installed</span>`);
+  let btn = '';
+  if (active || target) btn = '';
+  else if (s.always_on) {
+    // Ollama is always running; "using" it means making room on the GPU for its models.
+    const other = d.services.find(o => o.id !== s.id && holds(o));
+    if (other) btn = `<button class="small" title="Stops ${esc(other.title)}, so the web chat's Ollama models load right away" ${d.switching ? 'disabled' : ''} onclick="go('${esc(s.id)}')">Make room</button>`;
+  } else btn = `<button class="primary small" ${d.switching ? 'disabled' : ''} onclick="go('${esc(s.id)}')">Use</button>`;
+  return `<div class="choice k-${k} ${active ? 'active' : ''} ${target ? 'target' : ''}">
+    <div class="choice-top"><span class="kicon">${icon(k)}</span><div style="min-width:0">
+      <div class="tag">${TAGS[k]}</div><div class="choice-title">${esc(s.title)}</div></div></div>
+    <div class="choice-about">${esc(s.about)}</div>
+    ${chips.length ? `<div class="chips">${chips.join('')}</div>` : ''}
+    <div class="choice-foot"><span class="pill ${cls}">${text}</span>${btn}</div></div>`;
+}
+
+// --- Vitals. Each kind of number has its own look: capacity as a bar, load as a 3-minute
+// history, temperature on a cool-to-hot scale, power split by where it goes.
+const H = {gpu: [], cpu: [], power: []};
+const record = (k, v) => { if (v == null) return; H[k].push(v); if (H[k].length > 60) H[k].shift(); };
+const gb = mib => (mib / 1024).toFixed(1);
+const lvl = (v, warn, bad) => v >= bad ? 'bad' : v >= warn ? 'warn' : '';
+const metric = (label, value, visual, note, cls) =>
+  `<div class="m ${cls || ''}"><div class="m-top"><span class="m-label">${label}</span><span class="m-val">${value}</span></div>${visual}<div class="m-note">${note}</div></div>`;
+function spark(vals, max, cls) {
+  const W = 120, Hh = 26, N = 60;
+  const base = `<line x1="0" y1="${Hh - 0.5}" x2="${W}" y2="${Hh - 0.5}"/>`;
+  if (!vals.length) return `<svg class="spark" viewBox="0 0 ${W} ${Hh}" preserveAspectRatio="none">${base}</svg>`;
+  const pts = vals.map((v, i) => [(W * (N - vals.length + i) / (N - 1)).toFixed(1),
+                                  (Hh - 1 - (Hh - 3) * Math.min(v, max) / max).toFixed(1)]);
+  const line = pts.map(p => p.join(',')).join(' ');
+  return `<svg class="spark ${cls || ''}" viewBox="0 0 ${W} ${Hh}" preserveAspectRatio="none">${base}
+    <polygon points="${pts[0][0]},${Hh} ${line} ${pts[pts.length - 1][0]},${Hh}"/><polyline points="${line}"/></svg>`;
+}
+function temp(v, warn, bad) {
+  if (v == null) return metric('Temperature', '–', '<div class="scale" style="opacity:.25"></div>', 'no sensor');
+  const at = Math.max(0, Math.min(100, (v - 30) / (95 - 30) * 100));
+  return metric('Temperature', `${v}<small> °C</small>`, `<div class="scale"><i style="left:${at}%"></i></div>`,
+    v >= bad ? 'hot' : v >= warn ? 'warm' : 'cool', lvl(v, warn, bad));
+}
+const loadMetric = (v, hist, cls, note) => metric('Load', v != null ? `${v}<small>%</small>` : '–', spark(hist, 100, cls), note);
+const section = (ic, name, sub, body) =>
+  `<div class="vsec"><div class="vhead">${icon(ic)}<span class="vname">${name}</span><span class="vsub">${sub}</span></div><div class="vgrid">${body}</div></div>`;
+function vitals(d) {
+  const g = d.gpu, c = d.cpu || {}, m = d.ram, out = [];
+  if (g) {
+    const n = Math.round(g.total / 1024), used = g.used / 1024;
+    const cells = Array.from({length: n}, (_, i) =>
+      `<i><b style="width:${Math.max(0, Math.min(1, used - i)) * 100}%"></b></i>`).join('');
+    out.push(section('gpu', 'GPU', esc(g.name.replace(/^NVIDIA (GeForce )?/, '')),
+      metric('Video memory', `${gb(g.used)}<small> / ${gb(g.total)} GB</small>`, `<div class="cells">${cells}</div>`,
+        `${gb(g.total - g.used)} GB free`, 'wide')
+      + loadMetric(g.util, H.gpu, '', g.util >= 10 ? 'working' : 'idle')
+      + temp(g.temp, 75, 83)));
+  }
+  out.push(section('cpu', 'CPU', (c.cores || '?') + ' threads',
+    loadMetric(c.load, H.cpu, 'cpu', c.load == null ? '' : c.load >= 85 ? 'busy' : c.load >= 10 ? 'working' : 'idle')
+    + temp(c.temp, 75, 85)));
+  if (m) {
+    const p = 100 * m.used / m.total;
+    out.push(section('ram', 'Memory', gb(m.total) + ' GB',
+      metric('In use', `${gb(m.used)}<small> / ${gb(m.total)} GB</small>`, `<div class="bar"><i style="width:${p}%"></i></div>`,
+        `${gb(m.total - m.used)} GB free`, 'wide ' + lvl(p, 80, 92))));
+  }
+  if (d.disks && d.disks.length) {
+    const size = mib => mib >= 1024 * 1024 ? `${(mib / 1024 / 1024).toFixed(2)}<small> TB</small>` : `${Math.round(mib / 1024)}<small> GB</small>`;
+    out.push(section('disk', 'Storage', 'SSDs', d.disks.map(s => {
+      const p = 100 * s.used / (s.used + s.free);
+      return metric(s.name, `${size(s.used)}<small> / </small>${size(s.total)}`,
+        `<div class="bar"><i style="width:${p}%"></i></div>`,
+        `${Math.round(s.free / 1024)} GB free · ${Math.round(p)}% used`, 'wide ' + lvl(p, 85, 95));
+    }).join('')));
+  }
+  let power;
+  if (d.total_power != null) {
+    const parts = [['GPU', g.power, 'p-gpu', 'var(--accent)'], ['CPU', c.power, 'p-cpu', 'var(--cpu)'],
+                   ['Rest, estimated', d.rest_watts, 'p-rest', 'var(--rest)']];
+    const bar = parts.map(([, w, cls]) => `<i class="${cls}" style="width:${100 * w / d.total_power}%"></i>`).join('');
+    const legend = parts.map(([name, w, , color]) => `<span style="--c:${color}">${name} <b>${w} W</b></span>`).join('');
+    const peak = Math.max(150, ...H.power);
+    power = metric('Whole box', `≈ ${d.total_power}<small> W</small>`,
+      `<div class="bar">${bar}</div><div class="legend">${legend}</div>${spark(H.power, peak)}`,
+      `GPU and CPU measured; ~${d.rest_watts} W for board, RAM, disks, fans`, 'wide big');
+  } else {
+    power = metric('Whole box', '–', '', c.power == null ? 'CPU power not measured: rerun setup.sh' : 'the GPU reports no power', 'wide');
+  }
+  out.push(section('bolt', 'Power', 'estimate', power));
+  return out.join('');
+}
+
+async function load() {
+  let r;
+  try { r = await fetch('/_ai/api/status'); } catch (e) { return; }
+  if (r.status === 401) { location.href = '/_ai/login?next=/'; return; }
+  const d = await r.json();
+  lastOk = Date.now();
+  const live = document.getElementById('live');
+  live.classList.remove('blink'); void live.offsetWidth; live.classList.add('blink');
+  if (d.now) OFFSET = d.now - Date.now() / 1000;
+  const err = document.getElementById('error');
+  err.textContent = d.error || ''; err.hidden = !d.error;
+  if (!d.services) { tick(); return; }  // Docker didn't answer; keep the last view
+  record('gpu', d.gpu && d.gpu.util); record('cpu', d.cpu && d.cpu.load); record('power', d.total_power);
+  const svcs = d.services, holder = svcs.find(holds), target = svcs.find(s => s.id === d.switching);
+  document.getElementById('holder').innerHTML = d.switching
+    ? `<span class="state busy">Switching to ${esc(target ? target.title : 'nothing')}…</span>`
+    : holder ? `<span class="state on">● ${esc(holder.title)}${holder.always_on ? ' (' + esc(shortName(holder.loaded[0])) + ')' : ''} has the GPU</span>`
+    : 'The GPU is free';
+  favicon(d.switching ? '#e3b350' : holder ? '#72e09e' : '');
+  document.body.classList.toggle('held', !!d.hold);
+  document.getElementById('hold').textContent = d.hold ? `${d.hold} is using the GPU: switching is off until it's done.` : '';
+  document.getElementById('hold').hidden = !d.hold;
+  setHTML('now', nowCard(d, svcs));
+  setHTML('choices', svcs.map(s => choice(s, d)).join(''));
+  setHTML('vitals', vitals(d));
+  setHTML('api-models', svcs.filter(s => s.models && s.models.length)
+    .map(s => `<span class="chip">${esc(s.models[0])}</span>`).join(''));
+  const idle = d.idle_stop;
+  document.getElementById('idle').textContent = (d.idle_minutes
+    ? `The chat model stops after ${d.idle_minutes} min without requests; the next one starts it again (1-2 min).`
+    : 'Chat models stay loaded until you stop them.')
+    + (idle ? ` Last idle stop: ${idle.service}, ${new Date(idle.at * 1000).toLocaleString()}.` : '');
+  renderLeds(d.leds);
+  document.querySelector('.power').style.display = d.power ? '' : 'none';
+  tick();
+}
+// The LED card is built once; later loads only update it, so a control you're using isn't redrawn.
+function renderLeds(l) {
+  const box = document.getElementById('leds');
+  if (!l) { box.innerHTML = ''; return; }
+  if (!box.firstChild) {
+    box.innerHTML = `<section class="card"><div class="card-head"><h2>Case lighting</h2><span class="pill" id="leds-state"></span></div>
+      <p class="about" id="leds-devs"></p>
+      <div class="controls">
+        <label>Effect <select id="leds-effect"></select></label>
+        <label>Speed <input type="range" id="leds-speed" min="0" max="100" step="5"></label>
+        <label>Color <input type="color" id="leds-color"></label>
+      </div>
+      <div class="actions"><button id="leds-off">Off</button><button id="leds-on">On</button></div></section>`;
+    document.getElementById('leds-off').onclick = () => setLeds({state: 'off'});
+    document.getElementById('leds-on').onclick = () => setLeds({state: 'on'});
+    document.getElementById('leds-effect').onchange = e => setLeds({state: 'on', effect: e.target.value});
+    document.getElementById('leds-speed').onchange = e => setLeds({state: 'on', speed: e.target.value});
+    document.getElementById('leds-color').onchange = e => setLeds({state: 'on', color: e.target.value});
+  }
+  const s = l.settings, on = s.state === 'on';
+  document.getElementById('leds-devs').textContent =
+    l.devices.map(x => x.name).join(' · ') || 'RGB on the board headers, through OpenRGB';
+  const st = document.getElementById('leds-state');
+  st.textContent = !s.state ? 'not set' : (l.applied ? (on ? 'on' : 'off') : 'applying…');
+  st.className = 'pill ' + (l.applied ? (on ? 'on' : 'off') : 'busy');
+  document.getElementById('leds-off').disabled = s.state === 'off';
+  document.getElementById('leds-on').disabled = on;
+  const sel = document.getElementById('leds-effect');
+  if (sel.options.length !== l.effects.length) {
+    sel.replaceChildren(...l.effects.map(name => new Option(name, name)));
+  }
+  const active = document.activeElement;
+  if (active !== sel) {
+    const match = l.effects.find(e => e.toLowerCase() === (s.effect || '').toLowerCase());
+    if (match) sel.value = match;
+  }
+  const speed = document.getElementById('leds-speed');
+  if (active !== speed) speed.value = s.speed === '' ? 50 : s.speed;
+  const color = document.getElementById('leds-color');
+  if (active !== color) color.value = '#' + (s.color || 'FFFFFF').toLowerCase();
+}
+function showError(text) { const e = document.getElementById('error'); e.textContent = text; e.hidden = !text; }
+async function setLeds(change) {
+  const r = await fetch('/_ai/api/leds', {method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(change)});
+  if (!r.ok) showError((await r.json()).error);
+  load();
+}
+// Power buttons confirm with a second click on the button itself (no browser dialog, which a
+// browser may block): the first click arms it for 5 seconds.
+const powerText = {
+  suspend: ['Really suspend?', 'Suspending… the page stops answering until the box wakes up.'],
+  reboot: ['Really restart?', 'Restarting… back in about two minutes.'],
+  poweroff: ['Really shut down?', 'Shutting down… back with the power button (or Wake-on-LAN, if the BIOS allows it).'],
+};
+document.querySelectorAll('[data-power]').forEach(b => {
+  b.insertAdjacentHTML('afterbegin', icon(b.dataset.icon));
+  b.onclick = () => power(b);
+});
+const label = (b, text) => b.querySelector('span').textContent = text;
+async function power(b) {
+  const action = b.dataset.power, state = document.getElementById('power-state');
+  if (!b.classList.contains('confirm')) {
+    document.querySelectorAll('[data-power]').forEach(o => { o.classList.remove('confirm'); label(o, o.dataset.label); });
+    b.classList.add('confirm');
+    label(b, powerText[action][0]);
+    clearTimeout(b.timer);
+    b.timer = setTimeout(() => { b.classList.remove('confirm'); label(b, b.dataset.label); }, 5000);
+    return;
+  }
+  clearTimeout(b.timer);
+  b.classList.remove('confirm');
+  label(b, b.dataset.label);
+  state.className = 'state busy';
+  state.textContent = 'Sending…';
+  try {
+    const r = await fetch('/_ai/api/power', {method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({action})});
+    if (r.status === 401) { location.href = '/_ai/login?next=/'; return; }
+    state.textContent = r.ok ? powerText[action][1] : (await r.json()).error;
+    if (!r.ok) state.className = 'state bad';
+  } catch (e) {
+    state.className = 'state bad';
+    state.textContent = 'Could not reach the box: ' + e.message;
+  }
+}
+async function go(id) {
+  const r = await fetch('/_ai/api/switch', {method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({service: id})});
+  if (!r.ok) showError((await r.json()).error);
+  load();
+}
+loadLinks().then(load); setInterval(load, 3000);
+</script></main></body></html>

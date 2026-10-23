@@ -1,0 +1,16 @@
+<!doctype html><html><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>Sign in · Local AI</title>{{favicon}}
+<style>
+{{style}}</style></head><body><main>
+<form class="card login" method="post" action="/_ai/login">
+<div class="brand" style="margin-bottom:14px">{{logo}}<div><h1>Local AI</h1>
+<p class="sub">Sign in with the AI API key.</p></div></div>
+<p class="err" id="wrong" hidden>That key is wrong.</p>
+<label for="key" class="state">API key (<code>API_KEY</code> in /opt/stacks/ai/data/.env on the server)</label>
+<input id="key" name="key" type="password" autocomplete="current-password" autofocus>
+<input type="hidden" name="next" id="next"><button class="primary">Sign in</button></form>
+<script>
+const q = new URLSearchParams(location.search);
+document.getElementById('next').value = q.get('next') || '/';
+document.getElementById('wrong').hidden = !q.get('wrong');
+</script></main></body></html>
