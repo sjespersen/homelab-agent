@@ -7,6 +7,9 @@
 Projects (brief, characters, reference photos, the shot list) live in DATA, which is backed up;
 the renders in MEDIA, on the media disk. One job runs at a time; the jobs ask the switcher for
 the GPU (Qwen for the shot list, SwarmUI for the rest) and hold it while they run.
+
+Without a switcher (SWITCHER empty), the Studio uses any OpenAI-compatible API at LLM_URL
+(Ollama, LM Studio, llama-server) and ComfyUI at COMFY_URL as they are, and leaves the GPU to you.
 """
 import base64
 import glob
@@ -37,7 +40,11 @@ DATA = os.environ.get("DATA", "/data")
 MEDIA = os.environ.get("MEDIA", "/media")
 MODELS = os.environ.get("MODELS", "/models")
 SWITCHER = os.environ.get("SWITCHER", "http://switcher:8079")
+# The chat API without a switcher (with one, it's the switcher's /v1), and its key if it wants one.
+LLM_URL = os.environ.get("LLM_URL", "http://127.0.0.1:11434/v1").rstrip("/")
+LLM_KEY = os.environ.get("LLM_KEY", "")
 LLM_MODEL = os.environ.get("STUDIO_LLM") or "qwen3.8-flash-next"
+LISTEN = os.environ.get("LISTEN", "0.0.0.0")
 PORT = int(os.environ.get("PORT", "8078"))
 # The switcher's login cookie: the same value, so one login covers the Local AI page and this.
 SESSION = hmac.new(API_KEY.encode(), b"ai-switcher-session", hashlib.sha256).hexdigest()
@@ -159,6 +166,15 @@ def switcher(method, path, body=None, timeout=30):
         raise RuntimeError(f"switcher: {e}") from None
 
 
+def llm_call(method, path, body=None, timeout=30):
+    """The chat API at LLM_URL, without a switcher. HTTP errors pass through as HTTPError."""
+    headers = {"Content-Type": "application/json", **({"Authorization": "Bearer " + LLM_KEY} if LLM_KEY else {})}
+    req = urllib.request.Request(LLM_URL + path, method=method, headers=headers,
+                                 data=json.dumps(body).encode() if body is not None else None)
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return json.loads(r.read() or b"{}")
+
+
 def has_gpu(st, svc):
     """Whether svc runs and answers. Ollama always runs, so it also needs the others stopped."""
     if st.get("switching") or svc.get("state") != "running" or svc.get("health") not in (None, "healthy"):
@@ -168,7 +184,17 @@ def has_gpu(st, svc):
 
 
 def gpu_for(service_id, ready, label):
-    """Makes the switcher give the GPU to service_id and waits until ready() says so."""
+    """Makes the switcher give the GPU to service_id and waits until ready() says so. Without a
+    switcher it only waits: starting ComfyUI or the model is up to you."""
+    if not SWITCHER:
+        deadline = time.time() + 60
+        while not ready():
+            if current["stop"]:
+                raise RuntimeError("stopped")
+            if time.time() > deadline:
+                raise RuntimeError(f"{label} doesn't answer")
+            time.sleep(5)
+        return
     st = switcher("GET", "/_ai/api/status")
     svc = next((s for s in st.get("services", []) if s["id"] == service_id), None)
     if svc is None:
@@ -195,7 +221,15 @@ def need_swarmui():
 
 def llm_models():
     """The models the shot list can use, as in Open WebUI: the switcher's (Qwen 27B, Strata)
-    and the ones downloaded into Ollama."""
+    and the ones downloaded into Ollama. Without a switcher: what LLM_URL lists. It can't say
+    which of them read pictures, so each one may try."""
+    if not SWITCHER:
+        try:
+            models = llm_call("GET", "/models", timeout=10).get("data", [])
+        except (OSError, ValueError) as e:
+            raise RuntimeError(f"{LLM_URL}: {e}") from None
+        return [{"id": m["id"], "label": m["id"], "service": None, "via": "openai", "vision": True}
+                for m in sorted(models, key=lambda m: m.get("id", "")) if m.get("id")]
     st = switcher("GET", "/_ai/api/status")
     out = [{"id": s["models"][0], "label": s["title"], "service": s["id"], "via": "switcher"}
            for s in st.get("services", []) if s.get("models") and not s.get("always_on")]
@@ -359,8 +393,18 @@ def llm(system, user, model, images=()):
     found = next((m for m in llm_models() if m["id"] == model), None)
     if found is None:
         raise RuntimeError(f"{model} isn't on this box (any more); pick another model")
-    gpu_for(found["service"], lambda: True, model)
-    if found["via"] == "ollama":
+    if found["service"]:
+        gpu_for(found["service"], lambda: True, model)
+    if found["via"] == "openai":
+        # Any OpenAI-compatible server; pictures as data URLs, which Ollama, llama-server and
+        # LM Studio read for models that see.
+        path = "/chat/completions"
+        parts = [{"type": "text", "text": user}] + [
+            {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64," + b}} for b in images]
+        body = {"model": model, "max_tokens": 30000, "temperature": 0.7,
+                "messages": [{"role": "system", "content": system},
+                             {"role": "user", "content": parts if images else user}]}
+    elif found["via"] == "ollama":
         # Ollama's own API: its OpenAI one can't set the context, and the guide needs ~8K.
         path = "/ollama/api/chat"
         body = {"model": model, "stream": False, "options": {"num_ctx": 32768, "temperature": 0.7},
@@ -373,12 +417,15 @@ def llm(system, user, model, images=()):
         body = {"model": model, "max_tokens": 30000, "temperature": 0.7,
                 "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
                 "reasoning_effort": "medium", "chat_template_kwargs": {"reasoning_effort": "medium"}}
-    req = urllib.request.Request(SWITCHER + path, data=json.dumps(body).encode(), method="POST",
-                                 headers={"Authorization": "Bearer " + API_KEY, "Content-Type": "application/json"})
     t = time.time()
     try:
-        with urllib.request.urlopen(req, timeout=3 * 3600) as r:
-            answer = json.loads(r.read())
+        if found["via"] == "openai":
+            answer = llm_call("POST", path, body, timeout=3 * 3600)
+        else:
+            req = urllib.request.Request(SWITCHER + path, data=json.dumps(body).encode(), method="POST",
+                                         headers={"Authorization": "Bearer " + API_KEY, "Content-Type": "application/json"})
+            with urllib.request.urlopen(req, timeout=3 * 3600) as r:
+                answer = json.loads(r.read())
     except urllib.error.HTTPError as e:
         error = e.read()[:2000].decode(errors="replace")
         apilog.write("llm", path=path, request=apilog.without_images(body), status=e.code, error=error,
@@ -1021,7 +1068,7 @@ def lora_arch(meta, head):
 def installed_loras(arch="krea"):
     """The LoRAs for one model in SwarmUI's Models/Lora (not the Studio's own), from their
     safetensors headers: [{"file", "title", "trigger"}]. arch: "krea" (stills) or "h3" (video)."""
-    root = os.path.join(MODELS, "Lora")
+    root = model_dir("Lora")
     out = []
     for folder, _, files in os.walk(root):
         for f in sorted(files):
@@ -1060,9 +1107,18 @@ def with_triggers(prompts, triggers):
     return [", ".join(triggers) + ". " + x if triggers else x for x in prompts]
 
 
+def model_dir(folder):
+    """A model folder under MODELS: SwarmUI's name (Lora, VAE), or plain ComfyUI's (loras, vae)."""
+    path = os.path.join(MODELS, folder)
+    comfy_name = {"Lora": "loras", "VAE": "vae"}.get(folder)
+    if comfy_name and not os.path.isdir(path) and os.path.isdir(os.path.join(MODELS, comfy_name)):
+        return os.path.join(MODELS, comfy_name)
+    return path
+
+
 def missing_models(kind=None):
     names = wf.NEEDS.get(kind, []) if kind else wf.MODEL_FILES
-    return [n for n in names if not os.path.exists(os.path.join(MODELS, wf.MODEL_FILES[n], n))]
+    return [n for n in names if not os.path.exists(os.path.join(model_dir(wf.MODEL_FILES[n]), n))]
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -1487,5 +1543,6 @@ if __name__ == "__main__":
     load_all()
     forget_comfy()  # no job runs yet: whatever ComfyUI still has of ours is a copy
     threading.Thread(target=worker, daemon=True).start()
-    threading.Thread(target=hold_loop, daemon=True).start()
-    ThreadingHTTPServer(("0.0.0.0", PORT), Handler).serve_forever()
+    if SWITCHER:
+        threading.Thread(target=hold_loop, daemon=True).start()
+    ThreadingHTTPServer((LISTEN, PORT), Handler).serve_forever()
