@@ -50,20 +50,11 @@ if [[ -d $nodes ]]; then
   done <<<"$node_list"
 fi
 
-# MiniMax's H3 prompt-writing guide, which the Studio gives Qwen when it writes motion prompts.
-# Fetched, not kept in this repo: MiniMax's repo has no license file. Pinned and checked.
-guide=data/studio/h3-prompt-guide.txt
-guide_url=https://raw.githubusercontent.com/MiniMax-AI/MiniMax-H3/d21241f0a4b3acbb34c97dae47fa417b7065e438/skills/h3-prompt-writing/references/base-en.txt
-guide_sha=2cfebc096a6e08370f288d468d90b60f7f9bcb938f94bf090816e910e48e75fc
-if [[ $(sha256sum "$guide" 2>/dev/null | cut -d' ' -f1) != "$guide_sha" ]]; then
-  if curl -4 -fsSL --retry 3 -o "$guide.part" "$guide_url" &&
-     [[ $(sha256sum "$guide.part" | cut -d' ' -f1) == "$guide_sha" ]]; then
-    mv "$guide.part" "$guide"
-  else
-    rm -f "$guide.part"
-    echo "Couldn't fetch MiniMax's H3 prompt guide; the Studio writes motion prompts without it." >&2
-  fi
-fi
+# MiniMax's H3 prompt-writing guide, which the Studio gives Qwen when it writes motion prompts:
+# the Studio image's guide.py fetches it (pinned to a commit, checked by hash; not kept in any repo,
+# since MiniMax's has no license file). Without it the Studio writes motion prompts all the same.
+docker run --rm --user "$(id -u):$(id -g)" -v "$PWD/data/studio:/data" --entrypoint python \
+  "$(docker compose config --images studio)" /app/guide.py /data >/dev/null || true
 
 # Open WebUI reaches the 27B and Strata through the switcher, with the API key.
 key=$(sed -n 's/^API_KEY=//p' data/.env)
