@@ -401,7 +401,7 @@ user service on the host (`hermes-wake.path`, no root) sends the Wake-on-LAN pac
 broadcasts from Hermes' container don't leave its Docker network. A device that wakes some other
 way can have a URL instead of a MAC (`laptop=http://buddy.local/api/wake`): the host POSTs to it,
 e.g. a Pi cabled to a Wi-Fi-only box's Ethernet port (`extras/wake-relay`), or an ESP32-S3
-plugged in as a USB keyboard. Ask it on Telegram or WhatsApp
+plugged in as a USB keyboard ([desk-buddy](https://github.com/sjespersen/desk-buddy)). Ask it on Telegram or WhatsApp
 to "wake the gpubox". The other computer has to allow Wake-on-LAN (see `extras/wake-on-lan`).
 
 ## Extras
