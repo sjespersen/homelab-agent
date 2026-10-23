@@ -116,6 +116,7 @@ A module is a folder in `stacks/`:
 | `module.env` | Title, start order, name/port behind Caddy (more with `SITES`), firewall ports, containers to stop for backups, settings passed to compose (`ENV`) |
 | `site.caddy`, `site.<site>.caddy` | What Caddy does for its name or port (usually one `reverse_proxy` line) |
 | `compose.with-<module>.yaml` | Added only when that other module is on (n8n joins Hermes' network) |
+| `compose.local.yaml` | Optional, gitignored: your own extra containers or overrides for this server, added last |
 | `backup-excludes.txt`, `before-up.sh`, `after-up.sh`, `root-setup.sh` | Optional: caches to skip, a step before or after start, host setup as root |
 
 To add your own service, copy a module like `uptime-kuma`, give it a free `PORT`, and run

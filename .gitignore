@@ -4,6 +4,8 @@ config.*.env
 !config.example.env
 # Notes about your own servers (hosts, disks, quirks).
 *.local.md
+# Your own containers or overrides for a stack on your server.
+compose.local.yaml
 # Runtime data and secrets live on the server and in the restic backup, never in git.
 data/
 etc-pihole/

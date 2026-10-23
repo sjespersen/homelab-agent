@@ -89,6 +89,8 @@ for m in "${modules[@]}"; do
     other=${f##*/compose.with-}
     if has_module "${other%.yaml}"; then COMPOSE_FILE+=":${f##*/}"; fi
   done
+  # Your own additions for this server (gitignored), last so they can override.
+  [[ ! -f $repo/stacks/$m/compose.local.yaml ]] || COMPOSE_FILE+=":compose.local.yaml"
   # Compose reads these from .env, so a plain `docker compose ...` in the directory works too.
   {
     for v in NAME DOMAIN LAN_IP TZ PUID PGID PIHOLE_HOSTS SITE_HOST SITE_URL COMPOSE_FILE; do
