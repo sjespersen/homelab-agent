@@ -209,17 +209,21 @@ curl http://<name>.local:8005/v1/chat/completions -H "Authorization: Bearer $key
 ## Tuning
 
 - `AI_QWEN27B_REPO` / `AI_QWEN27B_FILE`: the 27B GGUF. Measured on an RTX 5060 Ti 16 GB, with
-  MTP and an 8-bit KV cache:
+  MTP and an 8-bit KV cache (the 128K row: 5-bit values, MTP's own cache at 4 bits, the
+  default here):
 
   | File | Context | VRAM | Output | Coding task to a finished answer |
   |---|---|---|---|---|
   | unsloth `Qwen3.8-27B-UD-Q3_K_XL.gguf` (default, 13.1 GB) | 32K | 14.4 GB | 52 tok/s | 96 s |
   | ukisai `Swift-1.5-Qwen3.8-27B-GSQ-RCO-IQ3_XXS-mtp.gguf` (10.4 GB) | 100K | 15.2 GB | 60 tok/s | 67 s |
+  | the same Swift 1.5 | 128K | 15.7 GB | 52 tok/s (26 with 126K in it) | 44 s (bench median) |
 
-  Swift 1.5 is a fine-tune that thinks shorter; set `AI_CONTEXT=102400` with it. 128K doesn't
-  fit 16 GB with either. Both found a fact at the start of a 90K-token prompt, but reading
-  that much took ~150 s (Strata: 57 s).
-- Keep the KV cache at 8 bits (the default here): 4-bit KV makes Qwen 3.8 loop.
+  Swift 1.5 is a fine-tune that thinks shorter; set `AI_CONTEXT=131072` with it. Both found a
+  fact at the start of a 90K-token prompt, but reading that much took ~150 s (Strata: 57 s).
+  Without MTP, 144K fits with an 8-bit cache, but output drops to ~33 tok/s.
+- KV cache: keys at 8 bits, values at 5 (`q5_1`), MTP's draft cache at 4. Don't go lower for
+  the main cache: an all-4-bit KV cache makes Qwen 3.8 loop. The draft cache only proposes
+  tokens, so its bits can't change the answer.
 - `AI_STRATA_QUANT`: `IQ2_XS` (Strata's default, least RAM), `IQ3_XXS`, `IQ3_S` (default
   here), and larger ones; Strata's docs list RAM per quant. A new quant downloads again.
 - `AI_IDLE_MINUTES`: minutes without API requests or GPU load before the chat model stops (30;

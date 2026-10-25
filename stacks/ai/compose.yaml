@@ -38,7 +38,10 @@ services:
     #   unsloth UD-Q3_K_XL (13.1 GB)         32K context, 14.4 GB VRAM, 52 tok/s
     #   ukisai Swift 1.5 GSQ-RCO IQ3_XXS-mtp 100K context, 15.2 GB VRAM, 60 tok/s, and it thinks
     #     (10.4 GB, a fine-tune)             shorter: 67 s to a finished coding answer, 96 s above
-    # 128K doesn't fit either. Keep the KV cache at 8 bits: 4-bit makes Qwen 3.8 loop.
+    # 128K fits with the values at 5 bits (keys stay at 8) and MTP's own cache at 4 bits: 15.7 GB,
+    # 52 tok/s on a short prompt, 26 tok/s with 126K in the context, coding bench unchanged.
+    # Don't go lower: an all-4-bit KV cache makes Qwen 3.8 loop. Without MTP 144K fits at 8 bits,
+    # but at 33 tok/s.
     # MTP (the draft head inside the GGUF) nearly doubles the output speed (RTX 5060 Ti:
     # 28 -> 52 tok/s, 91-96% of drafts accepted); it works best with one request at a time.
     # Qwen 3.8 thinks at "xhigh" unless asked otherwise, and clients like Hermes don't ask:
@@ -61,7 +64,7 @@ services:
       - --cache-type-k
       - q8_0
       - --cache-type-v
-      - q8_0
+      - q5_1
       - --parallel
       - "1"
       - --spec-type
@@ -70,12 +73,13 @@ services:
       - "3"
       - --spec-draft-p-min
       - "0.75"
-      # For 100K on 16 GB: MTP keeps its own KV cache for the whole context (16-bit unless told),
-      # and a 256-token micro-batch halves the prompt-reading buffer (740 MB at 512).
+      # For 128K on 16 GB: MTP keeps its own KV cache for the whole context (16-bit unless told;
+      # it only proposes tokens, so 4 bits there can't change the answer), and a 256-token
+      # micro-batch halves the prompt-reading buffer (740 MB at 512).
       - --spec-draft-type-k
-      - q8_0
+      - q4_0
       - --spec-draft-type-v
-      - q8_0
+      - q4_0
       - --ubatch-size
       - "256"
       - --chat-template-kwargs
