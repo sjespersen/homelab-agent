@@ -339,6 +339,7 @@ services:
       LEDS_EFFECT: "${AI_LEDS_ON_MODE}"   # defaults until changed on the page
       LEDS_SPEED: "${AI_LEDS_ON_SPEED}"
       API_LOG_DIR: /logs   # every model request and its answer (logs/vector.yaml sends them to the Logs page)
+      CLASSIFIER_SHIM: "${AI_CLASSIFIER_SHIM}"   # "allow": answer Claude Code's auto-mode classifier here, not via the model
     ports:
       - "127.0.0.1:8079:8079"
     volumes:
