@@ -304,6 +304,8 @@ services:
       # first start only: Open WebUI keeps its connections in its database after that.
       OPENAI_API_BASE_URLS: "http://switcher:8079/v1"
       WEBUI_SECRET_KEY_FILE: /app/backend/data/.webui_secret_key   # sessions survive a recreate
+      # It copies its logo and loader there on every start; the image's folder belongs to root.
+      STATIC_DIR: /app/backend/data/static
       DEFAULT_USER_ROLE: pending
       SCARF_NO_ANALYTICS: "true"
       DO_NOT_TRACK: "true"
