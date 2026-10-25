@@ -8,7 +8,8 @@ sources:
   containers:
     type: docker_logs
     docker_host: http://logs-socket-proxy:2375
-    exclude_containers: [ai-log-shipper]
+    # Vector itself, and the socket proxies (each request they pass on is a line, nothing else)
+    exclude_containers: [ai-log-shipper, ai-socket-proxy, ai-logs-socket-proxy, beszel-socket-proxy]
   studio_api:
     type: file
     include: [/studio-logs/api.jsonl*]   # with the rotated files, so lines written just before a rotation still arrive
@@ -21,10 +22,16 @@ sources:
     max_line_bytes: 16777216
 
 transforms:
+  # Without the noise: Ollama's health checks and model list polling, and Open WebUI's INFO
+  # lines (its access log). The model requests themselves are in the switcher's API log.
   docker:
     type: remap
     inputs: [containers]
+    drop_on_abort: true
     source: |
+      msg = string(.message) ?? ""
+      if .container_name == "ai-ollama" && match(msg, r'^\[GIN\].*\|\s+(HEAD\s+"/"|GET\s+"/api/(tags|ps|version)")') { abort }
+      if .container_name == "ai-webchat" && match(msg, r'\|\s*INFO\s*\|') { abort }
       del(.label)
       .source = "docker"
 

@@ -254,8 +254,9 @@ curl http://<name>.local:8005/v1/chat/completions -H "Authorization: Bearer $key
   the Studio, Hermes, other clients) with its answer, streams put back together, pictures as
   their size, in `AI_MEDIA_DIR/switcher/logs/api.jsonl`, rotated at 10 MB with 5 old files kept.
   Not backed up.
-- Logs (port 8009 / `logs.<DOMAIN>`, the switcher's login): VictoriaLogs with every container's
-  log and the API logs, searchable for 7 days (10 GB at most), in `AI_MEDIA_DIR/logs/`.
+- Logs (port 8009 / `logs.<DOMAIN>`, the switcher's login): VictoriaLogs with the containers'
+  logs (without the socket proxies, Ollama's health checks and Open WebUI's INFO lines) and the
+  API logs, searchable for 7 days (10 GB at most), in `AI_MEDIA_DIR/logs/`.
   Vector collects them (`logs/vector.yaml`). In the search page, `source:api` shows only the
   model requests and answers (one line each: model, client, time, tokens, question, answer;
   the whole JSON in `request` and `response`), `source:studio` the Studio's calls, also
