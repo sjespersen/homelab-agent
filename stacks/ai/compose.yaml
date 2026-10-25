@@ -316,7 +316,7 @@ services:
   # Also the chat API (/v1): it starts the model a request names and stops an idle one.
   # https://github.com/sjespersen/gpu-switcher
   switcher:
-    image: ghcr.io/sjespersen/gpu-switcher:latest@sha256:cae4a829ec42570989ea52901903afa358bf56bca31ba00aeb751cdf7e17feb3  # 0.2.1
+    image: ghcr.io/sjespersen/gpu-switcher:latest@sha256:3759aaf463e94c5f03c076bab2edb7543ab191d4aeb39cf6957b5829e81088d0  # 0.2.2
     container_name: ai-switcher
     user: "${PUID}:${PGID}"
     env_file:
@@ -332,10 +332,12 @@ services:
       LEDS: "${AI_LEDS}"   # yes: show the LED switch
       LEDS_EFFECT: "${AI_LEDS_ON_MODE}"   # defaults until changed on the page
       LEDS_SPEED: "${AI_LEDS_ON_SPEED}"
+      API_LOG_DIR: /logs   # every model request and its answer (logs/vector.yaml sends them to the Logs page)
     ports:
       - "127.0.0.1:8079:8079"
     volumes:
       - ./data/switcher:/state
+      - ${AI_MEDIA_DIR}/switcher/logs:/logs
       # Read-only, to drop a stopped service's model files from the page cache (drop_cache).
       - ${AI_MODELS_DIR}:/models:ro
       # Read-only, for the page's disk fill levels.
@@ -402,7 +404,7 @@ services:
       - /run
     restart: unless-stopped
 
-  # Logs: VictoriaLogs keeps the containers' logs and the Studio's API log for 30 days (10 GB at
+  # Logs: VictoriaLogs keeps the containers' logs and the API logs (switcher, Studio) for 7 days (10 GB at
   # most) on the media disk, not backed up, with a search page (port 8009 / logs.<DOMAIN>, behind
   # the switcher's login: site.logs.caddy). Vector collects them (logs/vector.yaml).
   logs:
@@ -411,7 +413,7 @@ services:
     user: "${PUID}:${PGID}"
     command:
       - -storageDataPath=/data
-      - -retentionPeriod=30d
+      - -retentionPeriod=7d
       - -retention.maxDiskSpaceUsageBytes=10GiB
       - -insert.maxLineSizeBytes=16MiB   # a Studio request carries the whole H3 guide
     ports:
@@ -431,6 +433,7 @@ services:
       - ./logs/vector.yaml:/etc/vector/vector.yaml:ro
       - ${AI_MEDIA_DIR}/logs/vector:/var/lib/vector   # how far it has read
       - ${AI_MEDIA_DIR}/studio/logs:/studio-logs:ro
+      - ${AI_MEDIA_DIR}/switcher/logs:/switcher-logs:ro
     networks: [default, logs-api]
     read_only: true
     cap_drop: [ALL]

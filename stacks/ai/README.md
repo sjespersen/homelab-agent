@@ -250,11 +250,16 @@ curl http://<name>.local:8005/v1/chat/completions -H "Authorization: Bearer $key
 - The Studio's API log: every request to the chat models and ComfyUI with what came back
   (pictures as their size), in `AI_MEDIA_DIR/studio/logs/api.jsonl`, rotated at 10 MB with 5
   old files kept. Not backed up. `tail -f /srv/media/studio/logs/api.jsonl | jq`
+- The switcher's API log: every request that runs a model (`/v1` and `/ollama`: Open WebUI,
+  the Studio, Hermes, other clients) with its answer, streams put back together, pictures as
+  their size, in `AI_MEDIA_DIR/switcher/logs/api.jsonl`, rotated at 10 MB with 5 old files kept.
+  Not backed up.
 - Logs (port 8009 / `logs.<DOMAIN>`, the switcher's login): VictoriaLogs with every container's
-  log and the Studio's API log, searchable for 30 days (10 GB at most), in `AI_MEDIA_DIR/logs/`.
-  Vector collects them (`logs/vector.yaml`). In the search page, `source:studio` shows the
-  Studio's calls (the whole request and response in their `request` and `response` fields),
-  `container_name:ai-switcher` one container. Opening port 8009 on the LAN takes a setup run.
+  log and the API logs, searchable for 7 days (10 GB at most), in `AI_MEDIA_DIR/logs/`.
+  Vector collects them (`logs/vector.yaml`). In the search page, `source:api` shows only the
+  model requests and answers (one line each: model, client, time, tokens, question, answer;
+  the whole JSON in `request` and `response`), `source:studio` the Studio's calls, also
+  ComfyUI's, `container_name:ai-switcher` one container. Opening port 8009 on the LAN takes a setup run.
 
 ## Updates
 

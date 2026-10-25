@@ -199,10 +199,10 @@ agent) gets a lot. Read this before you put anything valuable on the box.
   under names the Studio makes up; it serves renders only by those names, so a request can't
   reach other files.
 - The logs page (ai module, port 8009, via Caddy; VictoriaLogs) needs the same login as SwarmUI;
-  VictoriaLogs itself listens on `127.0.0.1` only. The logs hold the Studio's prompts and the
-  models' answers, and whatever the containers print. Vector reads the containers' logs through
+  VictoriaLogs itself listens on `127.0.0.1` only. The logs hold every prompt sent to the models
+  and their answers (also Open WebUI's chats; pictures left out), and whatever the containers print. Vector reads the containers' logs through
   its own read-only Docker proxy (list, inspect, logs, events), on an internal network nothing
-  else is on. The logs stay on the media disk, out of the backups, for 30 days.
+  else is on. The logs stay on the media disk, out of the backups, for 7 days.
 - The wake relay Pi (`extras/wake-relay`) answers `/api/wake` without a login to anyone on the
   LAN; all it can do is send the magic packet to the box.
 - With `extras/sudo-touch-id`, sudo also accepts a key from your forwarded SSH agent. With

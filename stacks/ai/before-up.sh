@@ -17,7 +17,7 @@ fi
 # Docker would create missing bind-mount folders as root; the containers run as you.
 models=$(sed -n 's/^AI_MODELS_DIR="\(.*\)"$/\1/p' .env)
 media=$(sed -n 's/^AI_MEDIA_DIR="\(.*\)"$/\1/p' .env)
-for sub in studio studio/logs swarm/Output comfyui/input comfyui/output logs/victoria logs/vector; do
+for sub in studio studio/logs switcher/logs swarm/Output comfyui/input comfyui/output logs/victoria logs/vector; do
   [[ -d $media/$sub ]] || mkdir -p "$media/$sub" || {
     echo "Can't create $media/$sub: run bootstrap.sh (./setup.sh) first, it prepares $media." >&2
     exit 1

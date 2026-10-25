@@ -1,6 +1,7 @@
-# Vector: collects the containers' logs (through the read-only Docker proxy) and the Studio's API
-# log, and sends them to VictoriaLogs. The search page groups them by `source` and
-# `container_name`; a Studio entry's `request` and `response` hold the whole JSON.
+# Vector: collects the containers' logs (through the read-only Docker proxy) and the API logs of
+# the switcher (every model request: source:api) and the Studio, and sends them to VictoriaLogs.
+# The search page groups them by `source` and `container_name`; an API entry's `request` and
+# `response` hold the whole JSON.
 data_dir: /var/lib/vector
 
 sources:
@@ -11,6 +12,11 @@ sources:
   studio_api:
     type: file
     include: [/studio-logs/api.jsonl*]   # with the rotated files, so lines written just before a rotation still arrive
+    read_from: beginning
+    max_line_bytes: 16777216
+  switcher_api:
+    type: file
+    include: [/switcher-logs/api.jsonl*]
     read_from: beginning
     max_line_bytes: 16777216
 
@@ -56,10 +62,25 @@ transforms:
       out.message = summary
       . = out
 
+  api:
+    type: remap
+    inputs: [switcher_api]
+    drop_on_abort: true
+    source: |
+      e, err = parse_json(.message)
+      if err != null || !is_object(e) { abort }
+      e = object!(e)
+      ts, err = parse_timestamp(e.at, "%+")
+      if err != null { ts = now() }
+      . = {"timestamp": ts, "source": "api", "container_name": "ai-switcher", "message": e.summary,
+           "path": e.path, "model": e.model, "client": e.client, "agent": e.agent, "status": e.status,
+           "seconds": e.seconds, "error": e.error,
+           "request": encode_json(e.request), "response": encode_json(e.response)}
+
 sinks:
   victorialogs:
     type: elasticsearch
-    inputs: [docker, studio]
+    inputs: [docker, studio, api]
     endpoints: [http://logs:9428/insert/elasticsearch/]
     api_version: v8
     compression: gzip
