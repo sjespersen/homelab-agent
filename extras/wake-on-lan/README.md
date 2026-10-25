@@ -15,3 +15,9 @@ The BIOS has to allow it too, for waking from suspend as well as from off. On MS
 Wake Up Event Setup → Resume By PCI-E Device: Enabled, and Power Management Setup → ErP Ready:
 Disabled (ErP cuts the network card's standby power). Check with `sudo ethtool <iface> | grep
 Wake-on` (should say `g`).
+
+On Ubuntu, netplan writes a `.link` file for every Ethernet port it configures, with
+`WakeOnLan=off` unless the port says otherwise, and every `netplan apply` reapplies it: Wake-on-LAN
+is off again until the next boot, and the box doesn't wake from its next suspend (the wake relay
+sees no link). Add `wakeonlan: true` to the port in `/etc/netplan/*.yaml`, then `sudo netplan
+generate` (no apply needed) and `sudo systemctl restart wake-on-lan.service`.
