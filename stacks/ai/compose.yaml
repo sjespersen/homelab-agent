@@ -149,6 +149,10 @@ services:
       REINSTALL: ${STRATA_REINSTALL:-0}
       VISION: "no"
       GPU: "0"
+      # A cold start (after setup, or with the page cache full of other models) loads ~50 GB while
+      # the kernel makes room, which took 15+ min twice; Strata's default gives the engine 15 min
+      # and then restarts it.
+      STRATA_ENGINE_READY_S: "2700"
     # First start downloads the model (~70 GB) and prepares it; later starts take under a minute.
     # Strata keeps 32-62 GB of it in RAM and page-locks part of that for the GPU.
     volumes:
