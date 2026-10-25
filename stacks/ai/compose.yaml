@@ -88,8 +88,14 @@ services:
       - "256"
       - --chat-template-kwargs
       - '{"reasoning_effort": "medium"}'   # the default when a request names none
+      # Qwen 3.8's own template with one change: a system message after the first one is
+      # rendered where it is instead of failing the request. Claude Code sends one (its
+      # environment notes) on every request.
+      - --chat-template-file
+      - /templates/qwen3.8-chat-template.jinja
     volumes:
       - ${AI_MODELS_DIR}/llama.cpp:/models
+      - ./qwen3.8-chat-template.jinja:/templates/qwen3.8-chat-template.jinja:ro
     # The port opens only once the model is downloaded and loaded: without a long start period
     # the image's own check calls a first start unhealthy.
     healthcheck:
