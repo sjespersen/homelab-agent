@@ -209,19 +209,21 @@ curl http://<name>.local:8005/v1/chat/completions -H "Authorization: Bearer $key
 ## Tuning
 
 - `AI_QWEN27B_REPO` / `AI_QWEN27B_FILE`: the 27B GGUF. Measured on an RTX 5060 Ti 16 GB, with
-  MTP and an 8-bit KV cache (the 128K row: 5-bit values, MTP's own cache at 4 bits, the
-  default here):
+  K at 8 bits, V at 5 and a 4-bit draft cache. Speculative decoding uses the DFlash2 draft
+  (z-lab, 1.1 GB, downloaded on the first start); the MTP row is for comparison:
 
-  | File | Context | VRAM | Output | Coding task to a finished answer |
-  |---|---|---|---|---|
-  | unsloth `Qwen3.8-27B-UD-Q3_K_XL.gguf` (default, 13.1 GB) | 32K | 14.4 GB | 52 tok/s | 96 s |
-  | ukisai `Swift-1.5-Qwen3.8-27B-GSQ-RCO-IQ3_XXS-mtp.gguf` (10.4 GB) | 100K | 15.2 GB | 60 tok/s | 67 s |
-  | the same Swift 1.5 | 128K | 15.7 GB | 52 tok/s (26 with 126K in it) | 44 s (bench median) |
+  | File | Draft | Context | VRAM | Output | Coding answer |
+  |---|---|---|---|---|---|
+  | unsloth `Qwen3.8-27B-UD-Q3_K_XL.gguf` (default, 13.1 GB) | DFlash2 | 32K | 15.6 GB | 50 tok/s | |
+  | ukisai `Swift-1.5-Qwen3.8-27B-GSQ-RCO-IQ3_XXS-mtp.gguf` (10.4 GB) | DFlash2 | 96K | 15.5 GB | 73 tok/s (40 with 90K in it) | 35 s (bench median) |
+  | the same Swift 1.5 | MTP | 128K | 15.7 GB | 58 tok/s (26 with 126K in it) | 44 s (bench median) |
 
-  Swift 1.5 is a fine-tune that thinks shorter; set `AI_CONTEXT=131072` with it. Both found a
-  fact at the start of a 90K-token prompt, but reading that much took ~150 s (Strata: 57 s).
-  Without MTP, 144K fits with an 8-bit cache, but output drops to ~33 tok/s.
-- KV cache: keys at 8 bits, values at 5 (`q5_1`), MTP's draft cache at 4. Don't go lower for
+  Output speeds of the Swift rows are coding-bench medians (same score with both drafts).
+  Swift 1.5 is a fine-tune that thinks shorter; set `AI_CONTEXT=98304` with it (112K runs out
+  of memory on the first long prompt). For 128K, switch the draft back to MTP in compose.yaml.
+  A 90K-token prompt takes ~150 s to read (Strata: 57 s). Without any draft, 144K fits with an
+  8-bit cache, but output drops to ~33 tok/s.
+- KV cache: keys at 8 bits, values at 5 (`q5_1`), the draft's cache at 4. Don't go lower for
   the main cache: an all-4-bit KV cache makes Qwen 3.8 loop. The draft cache only proposes
   tokens, so its bits can't change the answer.
 - `AI_STRATA_QUANT`: `IQ2_XS` (Strata's default, least RAM), `IQ3_XXS`, `IQ3_S` (default
