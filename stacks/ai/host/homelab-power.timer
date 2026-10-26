@@ -1,0 +1,12 @@
+[Unit]
+Description=Pick up a power action the path unit missed
+# homelab-power.path once sat "active (waiting)" and never noticed a new power file (systemd 259,
+# 2026-10-26); this looks every 30 s anyway, so a missed event only delays the action.
+
+[Timer]
+OnCalendar=*:*:0/30
+AccuracySec=1s
+Unit=homelab-power.service
+
+[Install]
+WantedBy=timers.target

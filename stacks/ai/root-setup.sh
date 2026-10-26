@@ -29,7 +29,8 @@ if ! grep -qs nvidia /etc/docker/daemon.json; then
 fi
 
 # The Power card on the Local AI page: the switcher writes suspend/reboot/poweroff to
-# data/switcher/power, homelab-power.path runs homelab-power.sh as root. homelab-ai-sleep stops
+# data/switcher/power, homelab-power.path runs homelab-power.sh as root (homelab-power.timer
+# looks every 30 s too, in case the path unit misses it). homelab-ai-sleep stops
 # the GPU service before any suspend (before NVIDIA's own step) and starts it again after.
 install -d -o "$SERVER_USER" -g "$SERVER_USER" /opt/stacks/ai/data/switcher
 install -m 755 "$repo/stacks/ai/host/homelab-power.sh" /usr/local/sbin/homelab-power.sh
@@ -37,12 +38,12 @@ install -m 755 "$repo/stacks/ai/host/homelab-ai-sleep.sh" /usr/local/sbin/homela
 # The page's CPU power tile: RAPL is root-only, so a root service writes whole watts to
 # data/switcher/cpu-power every 2 s.
 install -m 755 "$repo/stacks/ai/host/homelab-cpu-power.sh" /usr/local/sbin/homelab-cpu-power.sh
-for unit in homelab-power.service homelab-power.path homelab-ai-sleep.service homelab-cpu-power.service; do
+for unit in homelab-power.service homelab-power.path homelab-power.timer homelab-ai-sleep.service homelab-cpu-power.service; do
   sed "s|@DIR@|/opt/stacks/ai/data/switcher|" "$repo/stacks/ai/host/$unit" >/etc/systemd/system/$unit
 done
 rm -f /usr/lib/systemd/system-sleep/homelab-ai-sleep  # the earlier hook ran too late
 systemctl daemon-reload
-systemctl enable --now homelab-power.path
+systemctl enable --now homelab-power.path homelab-power.timer
 systemctl enable homelab-ai-sleep.service
 systemctl enable homelab-cpu-power.service
 systemctl restart homelab-cpu-power.service

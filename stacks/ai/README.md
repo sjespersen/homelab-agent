@@ -99,7 +99,8 @@ first: `CONFIG=config.ai.env ./ai-model.sh strata`.
   Strata's ~50 GB of RAM. An idle loaded model costs little power (a 16 GB RTX 50 card idles at
   ~6 W with Strata in its memory), so this is mostly about RAM.
 - The **Power** card suspends, restarts or shuts the box down, after a confirmation. A root
-  service (`homelab-power.path`/`.service`) runs it and accepts nothing but those three actions.
+  service (`homelab-power.path`/`.service`) runs it and accepts nothing but those three actions;
+  `homelab-power.timer` looks every 30 s as well, in case the path unit misses a request.
 - Before any suspend (page, power button, `systemctl suspend`) `homelab-ai-sleep.service` stops
   the GPU service, and starts it again after waking. It runs before NVIDIA's own suspend step:
   with a model still loaded, that step copies its GPU memory to RAM for ~90 s, and a model
