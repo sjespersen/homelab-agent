@@ -9,10 +9,13 @@ services:
     ports:
       - "8642:8642"
       - "9119:9119"
+    networks: [default, dns]
     # Fixed DNS: at boot Docker can start this before the network has handed the server a DNS
-    # server, and the container would then resolve nothing until restarted. Quad9, like
-    # Pi-hole's upstream (containers can't reach Pi-hole: ufw blocks them from the host).
-    dns: [9.9.9.9, 149.112.112.112]
+    # server, and the container would then resolve nothing until restarted. hermes-dns forwards
+    # to Quad9, like Pi-hole's upstream (containers can't reach Pi-hole: ufw blocks them from
+    # the host), and refuses Alibaba's domains (Corefile).
+    dns: [172.30.53.2]
+    depends_on: [dns]
     environment:
       HERMES_UID: "${PUID}"
       HERMES_GID: "${PGID}"
@@ -27,3 +30,25 @@ services:
     shm_size: "1gb"   # Chromium crashes with Docker's default 64 MB /dev/shm
     command: ["gateway", "run"]
     restart: unless-stopped
+
+  # Hermes' resolver (see Corefile). On its own small network with a fixed address, since Docker's
+  # dns: option takes an IP; the default network stays as it is (n8n joins it).
+  dns:
+    image: coredns/coredns:latest@sha256:0a9d8c8ddf34347eb59aad9a8784f0710de88d6d112726d11d271f9bc6daca26  # 1.15.0
+    container_name: hermes-dns
+    command: ["-conf", "/etc/coredns/Corefile"]
+    networks:
+      dns:
+        ipv4_address: 172.30.53.2
+    volumes:
+      - ./Corefile:/etc/coredns/Corefile:ro
+    read_only: true
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    restart: unless-stopped
+
+networks:
+  dns:
+    ipam:
+      config:
+        - subnet: 172.30.53.0/29

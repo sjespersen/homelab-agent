@@ -1,0 +1,16 @@
+# Hermes' DNS (the hermes-dns container). Everything goes to Quad9, except Alibaba's domains and
+# every name under them, which don't resolve: Qwen models have tried to upload to Alibaba Cloud
+# storage from an agent sandbox (Cohere's report, 2026-10). Blocked lookups show in
+# `docker logs hermes-dns`. A name only: Hermes can still reach a raw IP or its own resolver.
+alibaba.com alibaba-inc.com alibabacloud.com alibabadns.com alibabausercontent.com alicdn.com aliexpress.com aliexpress.ru aliexpress.us aliyun.com aliyuncs.com aliyundrive.com alipay.com alipayobjects.com dingtalk.com mmstat.com taobao.com tmall.com modelscope.cn modelscope.ai qwen.ai qwenlm.ai {
+    template ANY ANY {
+        rcode NXDOMAIN
+    }
+    log
+}
+
+. {
+    forward . 9.9.9.9 149.112.112.112
+    cache 300
+    errors
+}

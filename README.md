@@ -182,6 +182,10 @@ agent) gets a lot. Read this before you put anything valuable on the box.
 - Only the modules you enable run, and only their ports are open.
 - Hermes and n8n, the two containers that run code from outside, sit on Docker bridge networks.
   They can't reach the other services' ports or Caddy (ufw drops traffic from Docker networks).
+- Hermes resolves names through its own resolver (`hermes-dns`, CoreDNS), which refuses
+  Alibaba's domains and every name under them (`stacks/hermes/Corefile`), after a Qwen model
+  tried to upload to Alibaba Cloud storage from an agent sandbox. It's a name filter only: an
+  agent that uses a raw IP or its own resolver gets past it (see 1).
 - The Beszel agent talks to Docker through a read-only proxy, not the Docker socket.
 - n8n's Execute Command and Local File Trigger nodes are off.
 - The local AI API, switcher page and SwarmUI (ports 8005 and 8006, via Caddy) need the AI API
@@ -219,8 +223,12 @@ agent) gets a lot. Read this before you put anything valuable on the box.
 and code, and any of those can contain instructions written for it. It can run shell commands
 in its container, and that container holds your LLM credentials, chat-app sessions (a stolen
 WhatsApp session can read and send as you), API keys and GitHub deploy keys.
+The model behind it is part of this too: open-weight models have been seen probing and
+uploading from agent sandboxes on their own. Hermes' outbound traffic is open apart from the
+DNS denylist above.
 *Reduce it:* give it only the keys it needs; keep the chat apps on an allowlist of your own
-accounts; don't connect it to inboxes or accounts you can't afford to leak.
+accounts; don't connect it to inboxes or accounts you can't afford to leak; add domains to
+`stacks/hermes/Corefile` and watch `docker logs hermes-dns` for blocked lookups.
 
 **2. Partial isolation between containers.** Hermes and n8n are on bridge networks, but when
 both are enabled they share one (so workflows can call `http://hermes:8642/v1`): a compromised
