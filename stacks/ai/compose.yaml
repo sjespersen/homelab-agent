@@ -367,7 +367,7 @@ services:
   # the switcher for it. Projects in data/studio (backed up), renders on the media disk.
   # https://github.com/sjespersen/studio
   studio:
-    image: ghcr.io/sjespersen/studio:latest@sha256:7b8150c36a087a72c70d5e63db0ffc7301775190c3f101d5c8b5cd4e87fc45c5  # 0.4.1
+    image: ghcr.io/sjespersen/studio:latest@sha256:2e8c463cf47be306699d77ecd99e9e31b2087cfe83b7c546bea8ef8e536fc3b2  # 0.4.2
     container_name: ai-studio
     user: "${PUID}:${PGID}"
     env_file:
