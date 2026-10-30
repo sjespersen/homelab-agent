@@ -12,6 +12,9 @@ minute, through the Wi-Fi interface:
 - first try: `wpa_cli reassociate`; if that didn't help, restart the Wi-Fi client
   (`netplan-wpa-<iface>.service`, or the link itself) and `networkctl reconfigure`
 - after both: one more attempt every 30 minutes, until traffic flows again
+- every run: Wi-Fi power saving off (`iw dev <iface> set power_save off`). With it on, LAN
+  latency jumps to 50 ms and more and multicast gets lost, so `<host>.local` stops resolving;
+  drivers turn it back on after a reconnect
 
 Turn it on by putting the interface into `config.env` as `WIFI_WATCHDOG_IFACE` (setup.sh
 suggests it when the server is on Wi-Fi) and rerunning `./setup.sh`. Empty turns it off.

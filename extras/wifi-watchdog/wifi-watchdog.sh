@@ -12,6 +12,12 @@ mkdir -p "$state"
 fails=$(cat "$state/fails" 2>/dev/null || echo 0)
 level=$(cat "$state/level" 2>/dev/null || echo 0)
 
+# Power saving lets the card doze between beacons: LAN pings of 50 ms and more, and multicast
+# gets lost (mDNS: <host>.local stops resolving). Drivers turn it back on after a reconnect.
+if iw dev "$iface" get power_save 2>/dev/null | grep -q on; then
+  iw dev "$iface" set power_save off && echo "power saving on $iface was on: turned it off"
+fi
+
 reachable() { ping -c 2 -W 2 -I "$iface" "$@" >/dev/null 2>&1; }
 
 gw=$(ip -4 route show default dev "$iface" 2>/dev/null | awk '{ print $3; exit }')
