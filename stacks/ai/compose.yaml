@@ -322,7 +322,7 @@ services:
   # Also the chat API (/v1): it starts the model a request names and stops an idle one.
   # https://github.com/sjespersen/gpu-switcher
   switcher:
-    image: ghcr.io/sjespersen/gpu-switcher:latest@sha256:330cca3ed4feca3a5174141c098cd8573669c5e1edcbd222940b05afad9f781e  # 0.2.5
+    image: ghcr.io/sjespersen/gpu-switcher:latest@sha256:daf45ef33d94000deea452ccf5bfdcb1ec7970cf25b2097eecc4a2e9dd7fff16  # 0.2.6
     container_name: ai-switcher
     user: "${PUID}:${PGID}"
     env_file:
