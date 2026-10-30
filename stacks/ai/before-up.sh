@@ -138,10 +138,12 @@ for service in $services; do
 done
 
 # Create all of them, so the switcher can start them; then stop any that still run besides the
-# active one, freeing the GPU and port 8080.
+# active one, freeing the GPU and port 8080. Only the switcher's services (those with a profile):
+# the rest (Studio, logs, web chat) runs all the time and compose up keeps it running.
 docker compose --profile '*' create || exit 1
+always=$(docker compose --profile __none__ config --services)
 for service in $services; do
-  [[ ,$active, == *,"$service",* || $service == switcher || $service == socket-proxy || $service == webchat ]] && continue
+  [[ ,$active, == *,"$service",* || $'\n'$always$'\n' == *$'\n'$service$'\n'* ]] && continue
   if [[ -n $(docker compose --profile '*' ps -q "$service" 2>/dev/null) ]]; then
     echo "stopping $service ($active gets the GPUs)"
     docker compose --profile '*' stop -t 60 "$service"
