@@ -350,8 +350,8 @@ every boot); keep the box somewhere it won't walk off.
 
 ## Backups
 
-- Every night at `BACKUP_TIME` the server stops the containers that use SQLite (~15 s), takes
-  a restic snapshot of `/opt/stacks` into `~/backups/restic`, and keeps 7 daily, 4 weekly and
+- Every night at `BACKUP_TIME` the server stops the containers that use SQLite (~15 s; Hermes
+  keeps running: its databases are copied with SQLite's backup API instead), takes a restic snapshot of `/opt/stacks` into `~/backups/restic`, and keeps 7 daily, 4 weekly and
   6 monthly snapshots. Caches are excluded (each module's `backup-excludes.txt`).
 - The Mac copies that repo to `~/Backups/<name>/restic` once a day while awake. Its SSH key is
   limited to read-only rsync of that one folder, so a stolen Mac can't touch the server.
@@ -373,6 +373,8 @@ RESTIC_PASSWORD_COMMAND='security find-generic-password -s <name>-restic -w' \
 2. Stop the containers, then restore the app data from the Mac copy:
    ```sh
    restic -r ~/Backups/<name>/restic restore latest --target /tmp/restore
+   cd /tmp/restore/opt/stacks   # put the database copies back in place
+   for d in */.sqlite-backup; do cp -a "$d"/. "${d%/.sqlite-backup}"/ && rm -r "$d"; done
    rsync -a /tmp/restore/opt/stacks/ <user>@<server>:/opt/stacks/
    ```
 3. `./deploy.sh`. On the Mac, `mac/setup-mac.sh` re-authorises the pull key (`setup.sh`

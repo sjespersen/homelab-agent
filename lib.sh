@@ -1,7 +1,7 @@
 # Shared by the scripts in this repo. Set $repo to the repo's directory, then source this file.
 
 # The settings a module can have in stacks/<module>/module.env (see README, "Modules").
-module_vars=(TITLE DESCRIPTION ORDER CORE OPT_IN HOST PORT LINK FIREWALL_PORTS BACKUP_STOP ENV SITES)
+module_vars=(TITLE DESCRIPTION ORDER CORE OPT_IN HOST PORT LINK FIREWALL_PORTS BACKUP_STOP BACKUP_SQLITE ENV SITES)
 
 # One config file per server: config.env, or another one in the repo named by CONFIG
 # (CONFIG=config.ai.env ./deploy.sh). On the server it is always config.env.
