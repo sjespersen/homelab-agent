@@ -60,12 +60,23 @@ docker run --rm --user "$(id -u):$(id -g)" -v "$PWD/data/studio:/data" --entrypo
 key=$(sed -n 's/^API_KEY=//p' data/.env)
 (umask 077; printf 'OPENAI_API_KEYS=%s\n' "$key" >data/webchat.env)
 
-# Which service gets the GPU: the last one picked in the switcher (or ./ai-model.sh), else
-# AI_MODEL from the config; "none" after Stop. compose up starts only that one
-# (COMPOSE_PROFILES; empty: just the switcher).
+# Which services get the GPUs: the last one picked in the switcher (or ./ai-model.sh), or the
+# services of the mode picked there ("scenario:<id>", data/switcher/scenarios.json), else
+# AI_MODEL from the config; "none" after Stop. compose up starts only those
+# (COMPOSE_PROFILES, comma-separated; empty: just the switcher).
 services=$(docker compose --profile '*' config --services)
 active=$(cat data/switcher/active 2>/dev/null || true)
-if [[ $active != none && ( -z $active || $'\n'$services$'\n' != *$'\n'$active$'\n'* ) ]]; then
+if [[ $active == scenario:* ]]; then
+  active=$(python3 -c 'import json, sys
+for m in json.load(open(sys.argv[1])).get("scenarios", []):
+    if m.get("id") == sys.argv[2]:
+        print(",".join(m.get("services", [])))' data/switcher/scenarios.json "${active#scenario:}" 2>/dev/null)
+fi
+known=yes
+for one in ${active//,/ }; do
+  [[ $'\n'$services$'\n' == *$'\n'$one$'\n'* ]] || known=""
+done
+if [[ $active != none && ( -z $active || -z $known ) ]]; then
   active=$(sed -n 's/^COMPOSE_PROFILES="\(.*\)"$/\1/p' .env)
 fi
 profiles=$active
@@ -130,9 +141,9 @@ done
 # active one, freeing the GPU and port 8080.
 docker compose --profile '*' create || exit 1
 for service in $services; do
-  [[ $service == "$active" || $service == switcher || $service == socket-proxy || $service == webchat ]] && continue
+  [[ ,$active, == *,"$service",* || $service == switcher || $service == socket-proxy || $service == webchat ]] && continue
   if [[ -n $(docker compose --profile '*' ps -q "$service" 2>/dev/null) ]]; then
-    echo "stopping $service ($active gets the GPU)"
+    echo "stopping $service ($active gets the GPUs)"
     docker compose --profile '*' stop -t 60 "$service"
   fi
 done

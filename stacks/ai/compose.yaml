@@ -16,6 +16,9 @@ services:
     profiles: [qwen27b]
     # The CUDA 12.8 build: the cuda13 one needs a newer driver than Ubuntu's recommended one.
     image: ghcr.io/ggml-org/llama.cpp:server-cuda@sha256:31b39eacce2bab5fde9286ec3980ed5548a3987644e94da0d0c2092f93313538  # b11749
+    # llama-server as PID 1 ignores SIGTERM while it loads the model: a stop then waited out
+    # Docker's timeout and was killed. Under an init it ends at once (0.4 s instead of 40).
+    init: true
     container_name: ai-qwen27b
     labels:
       homelab.ai.files: llama.cpp   # its models, for the switcher's cache drop
@@ -230,10 +233,13 @@ services:
       - ${AI_MEDIA_DIR}/comfyui/output:/SwarmUI/dlbackend/ComfyUI/output
     shm_size: "4gb"
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:7801/"]   # not --spider: HEAD gets 405
+      # ComfyUI behind it, not just SwarmUI's page: that answers ~20 s before images can render,
+      # and the switcher (a mode's "ready") and the Studio go by this. Not --spider: HEAD gets 405.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://localhost:7801/ComfyBackendDirect/system_stats"]
       interval: 30s
       timeout: 5s
       start_period: 30m
+      start_interval: 5s   # while starting: "ready" within seconds, not up to 30
       retries: 3
     deploy:
       resources:
@@ -322,7 +328,7 @@ services:
   # Also the chat API (/v1): it starts the model a request names and stops an idle one.
   # https://github.com/sjespersen/gpu-switcher
   switcher:
-    image: ghcr.io/sjespersen/gpu-switcher:latest@sha256:daf45ef33d94000deea452ccf5bfdcb1ec7970cf25b2097eecc4a2e9dd7fff16  # 0.2.6
+    image: ghcr.io/sjespersen/gpu-switcher:latest@sha256:ff1853c48dcd4c6013f177166f1bd955e0abd5baf600a8c138d7d5315eb42d46  # 0.3.2
     container_name: ai-switcher
     user: "${PUID}:${PGID}"
     env_file:
