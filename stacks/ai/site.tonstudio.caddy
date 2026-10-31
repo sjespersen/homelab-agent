@@ -1,0 +1,9 @@
+# Tonstudio: voice cloning and TTS. It serves its own login page (/_ai/login) and reuses the
+# switcher's login cookie, so one sign-in covers the Local AI page and this. It talks to the
+# switcher and the engines itself, over the stack's network, so everything here is its own port.
+handle {
+	reverse_proxy 127.0.0.1:8010
+}
+handle_errors 502 {
+	respond "Tonstudio isn't running: ./deploy.sh on your computer." 502
+}
