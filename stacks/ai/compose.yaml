@@ -331,7 +331,7 @@ services:
   # Also the chat API (/v1): it starts the model a request names and stops an idle one.
   # https://github.com/sjespersen/gpu-switcher
   switcher:
-    image: ghcr.io/sjespersen/gpu-switcher:latest@sha256:fd27f2093fcb75c3e0add15dbb0d3903593babda6dd6f39809315122c569874c  # 0.3.4
+    image: ghcr.io/sjespersen/gpu-switcher:latest@sha256:f50b2b9ce33c2a9ac4adcf0903e6f047e4f469f90ab9e86d3f3bb6f0bf3ac4fd  # 0.3.6
     container_name: ai-switcher
     user: "${PUID}:${PGID}"
     env_file:
@@ -376,7 +376,7 @@ services:
   # the switcher for it. Projects in data/studio (backed up), renders on the media disk.
   # https://github.com/sjespersen/studio
   studio:
-    image: ghcr.io/sjespersen/studio:latest@sha256:2e8c463cf47be306699d77ecd99e9e31b2087cfe83b7c546bea8ef8e536fc3b2  # 0.4.2
+    image: ghcr.io/sjespersen/studio:latest@sha256:5da143f419d39ffe278f70ad5a01e2e74eac91277ab14152006e07dea66dbb17  # 0.4.3
     container_name: ai-studio
     user: "${PUID}:${PGID}"
     env_file:
