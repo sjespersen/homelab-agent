@@ -359,7 +359,7 @@ services:
       # Read-only, for the page's disk fill levels.
       - ${AI_MEDIA_DIR}:/media:ro
       - ../caddy/site:/site:ro
-    networks: [default, docker-api]
+    networks: [default, docker-api, tts]   # tts: the Tonstudio's speech engines
     read_only: true
     cap_drop: [ALL]
     deploy:
@@ -401,6 +401,141 @@ services:
     read_only: true
     cap_drop: [ALL]
     restart: unless-stopped
+
+  # The Tonstudio: voice cloning and text-to-speech (voice library, speak / dialogue / a chat
+  # model writes the text, takes). The page needs no GPU; its speech engines are the switcher's
+  # services of kind audio (tts-*), started on demand like the chat models. They run on the
+  # internal tts network, without internet: venvs and models live in AI_MODELS_DIR/tonstudio
+  # (~25 GB), set up by before-up.sh (tonstudio-setup) while the deploy has the internet.
+  # https://github.com/sjespersen/tonstudio
+  tonstudio:
+    image: ghcr.io/sjespersen/tonstudio:latest@sha256:ffda4193b055b8fdc5c1e5dbedf02161781043975f551ce0fe8b9f7cd49192ad  # 0.1.3
+    container_name: ai-tonstudio
+    user: "${PUID}:${PGID}"
+    env_file:
+      - path: ./data/.env   # API_KEY: the switcher's API and its login cookie
+        required: false
+    environment:
+      SWITCHER: http://switcher:8079
+      WHISPER_URL: http://tonstudio-whisper:8080
+      TONSTUDIO_LLM: "${AI_TONSTUDIO_LLM}"
+      HTTPS_URL: "${AI_TONSTUDIO_HTTPS_URL}"   # browsers only record on https: Record links there
+    ports:
+      - "127.0.0.1:8010:8077"   # Caddy serves it at port 8011 (site.tonstudio.caddy)
+    volumes:
+      - ./data/tonstudio:/data              # voices (backed up)
+      - ${AI_MEDIA_DIR}/tonstudio:/media    # takes
+    networks: [default, tts]
+    read_only: true
+    cap_drop: [ALL]
+    restart: unless-stopped
+
+  # Writes down what a voice sample says (Whisper on the CPU; loads the model on use).
+  tonstudio-whisper:
+    image: ghcr.io/sjespersen/tonstudio-engine:latest@sha256:e8a9db22dba0aa314e644a0d2195483f4185e2d30e46b4c0271cb08d20fcd42c  # 0.1.3
+    container_name: ai-tonstudio-whisper
+    command: [run, whisper]
+    init: true
+    user: "${PUID}:${PGID}"
+    environment: {HOME: /tmp}
+    volumes:
+      - ${AI_MODELS_DIR}/tonstudio:/engines:ro
+      - ./data/tonstudio/voices:/voices:ro
+    networks: [tts]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    restart: unless-stopped
+
+  # The engines' venvs and models (needs the internet). before-up.sh runs it for every engine
+  # that isn't set up for its image's requirements; by hand:
+  #   docker compose --profile tonstudio-setup run --rm tonstudio-setup setup <engine>...
+  tonstudio-setup:
+    profiles: [tonstudio-setup]
+    image: ghcr.io/sjespersen/tonstudio-engine:latest@sha256:e8a9db22dba0aa314e644a0d2195483f4185e2d30e46b4c0271cb08d20fcd42c  # 0.1.3
+    command: [setup, kokoro, chatterbox, qwen3, vibevoice, whisper]
+    user: "${PUID}:${PGID}"
+    environment: {HOME: /tmp}
+    volumes:
+      - ${AI_MODELS_DIR}/tonstudio:/engines
+
+  tts-kokoro: &tts
+    profiles: [tts-kokoro]
+    image: ghcr.io/sjespersen/tonstudio-engine:latest@sha256:e8a9db22dba0aa314e644a0d2195483f4185e2d30e46b4c0271cb08d20fcd42c  # 0.1.3
+    container_name: ai-tts-kokoro
+    command: [run, kokoro]
+    init: true
+    labels: &tts-labels
+      homelab.ai.files: tonstudio
+      homelab.ai.title: Kokoro
+      homelab.ai.about: "Speech: 54 ready-made voices in 8 languages, very fast (Tonstudio)"
+      homelab.ai.kind: audio
+      homelab.ai.model: tts-kokoro
+      homelab.ai.order: "20"
+      homelab.ai.ram: "2"
+    user: "${PUID}:${PGID}"
+    environment: {HOME: /tmp}
+    volumes:
+      - ${AI_MODELS_DIR}/tonstudio:/engines:ro
+      - ./data/tonstudio/voices:/voices:ro
+    networks: [tts]
+    read_only: true
+    tmpfs: [/tmp]
+    cap_drop: [ALL]
+    healthcheck:
+      test: ["CMD", "curl", "-fs", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10m
+      start_interval: 2s
+      retries: 3
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: cdi   # see the note at the top
+              device_ids: [nvidia.com/gpu=all]
+              capabilities: [gpu]
+    restart: unless-stopped
+
+  tts-chatterbox:
+    <<: *tts
+    profiles: [tts-chatterbox]
+    container_name: ai-tts-chatterbox
+    command: [run, chatterbox]
+    labels:
+      <<: *tts-labels
+      homelab.ai.title: Chatterbox
+      homelab.ai.about: "Speech: voice cloning in 23 languages, Turbo with [laugh] tags (Tonstudio)"
+      homelab.ai.model: tts-chatterbox
+      homelab.ai.order: "21"
+      homelab.ai.ram: "4"
+
+  tts-qwen3:
+    <<: *tts
+    profiles: [tts-qwen3]
+    container_name: ai-tts-qwen3
+    command: [run, qwen3]
+    labels:
+      <<: *tts-labels
+      homelab.ai.title: Qwen3-TTS
+      homelab.ai.about: "Speech: clone, design or direct a voice, 10 languages (Tonstudio)"
+      homelab.ai.model: tts-qwen3
+      homelab.ai.order: "22"
+      homelab.ai.ram: "5"
+
+  tts-vibevoice:
+    <<: *tts
+    profiles: [tts-vibevoice]
+    container_name: ai-tts-vibevoice
+    command: [run, vibevoice]
+    labels:
+      <<: *tts-labels
+      homelab.ai.title: VibeVoice
+      homelab.ai.about: "Speech: podcasts and dialogues, up to 4 speakers in one take (Tonstudio)"
+      homelab.ai.model: tts-vibevoice
+      homelab.ai.order: "23"
+      homelab.ai.ram: "5"
 
   # The switcher's only way to Docker: list and inspect containers, start and stop them.
   # Nothing that creates containers, runs commands in them or reads their files.
@@ -475,6 +610,9 @@ services:
     restart: unless-stopped
 
 networks:
+  # The Tonstudio's speech engines: no way out (only the switcher and the Tonstudio reach them).
+  tts:
+    internal: true
   # No way out and nothing published: only the switcher reaches the proxy.
   docker-api:
     internal: true

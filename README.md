@@ -207,6 +207,12 @@ agent) gets a lot. Read this before you put anything valuable on the box.
   and their answers (also Open WebUI's chats; pictures left out), and whatever the containers print. Vector reads the containers' logs through
   its own read-only Docker proxy (list, inspect, logs, events), on an internal network nothing
   else is on. The logs stay on the media disk, out of the backups, for 7 days.
+- The Tonstudio (ai module, port 8011, via Caddy) checks the same login itself (the switcher's
+  cookie or the key); the app listens on `127.0.0.1` only. Its speech engines and Whisper run
+  on an internal Docker network (`tts`) with no way out, read-only and without capabilities:
+  they get their models from the setup during a deploy, and can't send your voice samples or
+  texts anywhere. Its optional HTTPS address (`tailscale serve`) is reachable from the tailnet
+  only.
 - The wake relay Pi (`extras/wake-relay`) answers `/api/wake` without a login to anyone on the
   LAN; all it can do is send the magic packet to the box.
 - With `extras/sudo-touch-id`, sudo also accepts a key from your forwarded SSH agent. With

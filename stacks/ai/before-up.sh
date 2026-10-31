@@ -17,14 +17,14 @@ fi
 # Docker would create missing bind-mount folders as root; the containers run as you.
 models=$(sed -n 's/^AI_MODELS_DIR="\(.*\)"$/\1/p' .env)
 media=$(sed -n 's/^AI_MEDIA_DIR="\(.*\)"$/\1/p' .env)
-for sub in studio studio/logs switcher/logs swarm/Output comfyui/input comfyui/output logs/victoria logs/vector; do
+for sub in studio studio/logs switcher/logs tonstudio swarm/Output comfyui/input comfyui/output logs/victoria logs/vector; do
   [[ -d $media/$sub ]] || mkdir -p "$media/$sub" || {
     echo "Can't create $media/$sub: run bootstrap.sh (./setup.sh) first, it prepares $media." >&2
     exit 1
   }
 done
-mkdir -p data/switcher data/swarm/{Data,CustomWorkflows} data/webchat data/studio
-for sub in llama.cpp strata ollama swarm/Models swarm/dlbackend swarm/DLNodes swarm/Extensions; do
+mkdir -p data/switcher data/swarm/{Data,CustomWorkflows} data/webchat data/studio data/tonstudio/voices
+for sub in llama.cpp strata ollama tonstudio swarm/Models swarm/dlbackend swarm/DLNodes swarm/Extensions; do
   [[ -d $models/$sub ]] || mkdir -p "$models/$sub" || {
     echo "Can't create $models/$sub: run bootstrap.sh (./setup.sh) first, it prepares $models." >&2
     exit 1
@@ -136,6 +136,21 @@ for service in $services; do
     COMPOSE_BAKE=false docker compose --profile '*' build "$service" || exit 1
   fi
 done
+
+# The Tonstudio's engines run without internet: their venvs and models come from the setup,
+# here, while there is internet. Only engines not yet set up for the image's requirements (the
+# first time ~25 GB, several minutes); then nothing. A failed setup doesn't stop the deploy:
+# that engine says so when it starts, and the next deploy tries again.
+engines="kokoro chatterbox qwen3 vibevoice whisper"
+missing=$(docker compose --profile tonstudio-setup run --rm --no-deps -T --entrypoint sh tonstudio-setup -c '
+  for e in "$@"; do
+    [ "$(cat /engines/venvs/$e/.ready 2>/dev/null)" = "$(sha256sum /engine/req/$e.txt | cut -c1-16)" ] || printf "%s " "$e"
+  done' sh $engines) || missing=""
+if [[ -n $missing ]]; then
+  echo "Tonstudio: setting up $missing"
+  docker compose --profile tonstudio-setup run --rm --no-deps -T tonstudio-setup setup $missing \
+    || echo "Tonstudio: the setup of $missing failed; the next deploy tries again" >&2
+fi
 
 # Create all of them, so the switcher can start them; then stop any that still run besides the
 # active one, freeing the GPU and port 8080. Only the switcher's services (those with a profile):

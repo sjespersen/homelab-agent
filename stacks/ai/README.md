@@ -20,6 +20,7 @@ also suspend, restart or shut down the box.
 | `http://<name>.local:8006` | `swarm.<DOMAIN>` | SwarmUI |
 | `http://<name>.local:8007` | `chat.<DOMAIN>` | Open WebUI: web chat for all models, downloads Ollama models |
 | `http://<name>.local:8008` | `studio.<DOMAIN>` | The Studio: a brief to video shots, see [Studio](#studio) |
+| `http://<name>.local:8011` | `tonstudio.<DOMAIN>` | The Tonstudio: voice cloning and text-to-speech, see [Tonstudio](#tonstudio) |
 
 The switcher and SwarmUI ask for the AI API key once per browser; the API takes it as a Bearer
 token. It's `API_KEY` in `/opt/stacks/ai/data/.env` on the server.
@@ -193,6 +194,31 @@ Resolve), timings, the models it needs and their licenses. Here it's set up like
   default instructions to the models (`SHOT_PROMPT`, `REWRITE_PROMPT`, `MOTION_FORMAT`,
   `PICTURE_PROMPT`), so your own versions stay on the box (and in the backup), out of git.
 
+## Tonstudio
+
+`http://<name>.local:8011` (`tonstudio.<DOMAIN>`, the switcher's login): voice cloning and
+text-to-speech. A voice library (record or load a sample, Whisper writes down what it says),
+speak a text or a dialogue, or let a chat model write the text first; the takes stay on the
+box. It's its own project, [tonstudio](https://github.com/sjespersen/tonstudio): see its
+README for the engines (Kokoro, Chatterbox, Qwen3-TTS, VibeVoice), what each is good at and
+their licenses. Here it's set up like this:
+
+- Its speech engines are the switcher's services of kind audio (`tts-*`), started on demand
+  like the chat models and stopped when idle. They run on the internal `tts` network, without
+  internet; only the page and the switcher reach them.
+- Their Python environments and models (~25 GB) live in `AI_MODELS_DIR/tonstudio`. A deploy
+  sets up every engine that isn't set up for the pinned image's requirements yet (the first
+  time several minutes; afterwards only when an update changes them).
+- Its writer uses the switcher's chat models; `AI_TONSTUDIO_LLM` is the default.
+- **Recording** needs HTTPS: browsers only open the microphone on `https://`. With Tailscale,
+  switch on HTTPS certificates in the tailnet (admin console, DNS), then on the server
+  `sudo tailscale serve --bg --https=443 http://127.0.0.1:8010` and set
+  `AI_TONSTUDIO_HTTPS_URL=https://<name>.<tailnet>.ts.net`: Record on the plain page then
+  links there. Without it, load a recording as a file.
+- Voices in `data/tonstudio/` (backed up), takes in `AI_MEDIA_DIR/tonstudio/` (not backed up).
+- Without Pi-hole, opening port 8011 on the LAN takes a setup run (`./setup.sh`); over
+  Tailscale it works right away.
+
 ## Use the chat models
 
 ```sh
@@ -238,7 +264,8 @@ curl http://<name>.local:8005/v1/chat/completions -H "Authorization: Bearer $key
 - `/opt/stacks/ai/data/`: the API key, the switcher's choice, SwarmUI's settings and workflows.
   In the backups, except the web chat (`webchat`), which stays out of them on purpose
   (`backup-excludes.txt`).
-- `AI_MODELS_DIR`: `llama.cpp/`, `strata/`, and `swarm/` (image models, ComfyUI, extensions).
+- `AI_MODELS_DIR`: `llama.cpp/`, `strata/`, `swarm/` (image models, ComfyUI, extensions) and
+  `tonstudio/` (the speech engines' environments and models).
   Not backed up; models download again. Keep copies of models you made or changed yourself elsewhere.
 - `AI_MEDIA_DIR` (`/srv/media`): the generated media, on its own disk with `AI_MEDIA_DEVICE`
   (mounted like the models disk): SwarmUI's images (`swarm/Output/`), ComfyUI's uploads and
